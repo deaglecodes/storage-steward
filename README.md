@@ -146,6 +146,45 @@ only when it is older than the modification time. storage-steward uses that rule
 
 In the benchmark, this avoided 33–35 cache re-downloads for about 2 GB of extra disk.
 
+## Make it yours
+
+Every rule's tier and age threshold is a default you can change. You can also protect anything, or add
+your own folders to clean. Ask your agent in plain English ("never delete my transcripts") and the skill
+runs the right command, or run it yourself:
+
+```bash
+steward.py config set claude-transcripts --tier off         # never touch them
+steward.py config set claude-task-output --idle 6h           # clear task output after 6 hours
+steward.py config set codex-sessions --tier auto --idle 45d  # stop asking, just do it
+steward.py config keep ~/models '*.mov'                      # never delete these, whatever the rule
+steward.py config add work-builds --path '~/work/*/build' --idle 7 --tier auto
+steward.py rules                                             # the effective policy
+```
+
+The policy lives in `~/.config/storage-steward/config.json`:
+
+```json
+{
+  "rules": { "claude-transcripts": { "tier": "off" }, "claude-task-output": { "idle_days": 0.25 } },
+  "keep": ["~/models", "*.mov"],
+  "custom": [{ "name": "work-builds", "paths": ["~/work/*/build"], "idle_days": 7, "tier": "auto" }],
+  "sweep_every_hours": 3, "warn_below_gb": 20
+}
+```
+
+**Tiers:**
+- `auto`: the hooks sweep it.
+- `confirm`: asks first.
+- `info`: reported only.
+- `off`: ignored.
+
+**Guard rails:**
+- `keep` beats every rule.
+- Custom rules must name a folder below `~`.
+- Rules inside Documents, Desktop, Downloads, Pictures, Movies or Music are capped at `confirm`, so
+  automatic sweeps never reach your personal folders.
+- A broken config file falls back to the defaults instead of breaking a hook.
+
 ## Commands
 
 ```text
@@ -156,13 +195,15 @@ steward.py sweep --tier confirm --only RULE[,RULE] --yes
 steward.py report                 total reclaimed so far
 steward.py install [--agents LIST] [--schedule] [--dry-run] / uninstall
 steward.py schedule install|uninstall|status
+steward.py rules [--json]                       the effective policy
+steward.py config set|unset|keep|unkeep|add|drop|show
 ```
 
 Each command prints at most about 15 lines, so an agent never has to read thousands of lines of `du` output.
 
 ## Safety
 
-These rules are enforced in code and covered by 17 unit tests. storage-steward never:
+These rules are enforced in code and covered by 25 unit tests. storage-steward never:
 
 - empties your Trash (that's a permanent delete you should make yourself)
 - touches `Documents`, `Desktop`, `Downloads`, credentials, `settings.json`, memory or skills

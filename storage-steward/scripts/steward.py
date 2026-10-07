@@ -9,6 +9,8 @@
   install     link the skill + add hooks for detected agents (Claude Code, Codex, Cursor, Gemini CLI)
               [--agents LIST] [--schedule]; uninstall removes them
   schedule    install | uninstall | status of an OS timer (launchd/systemd/cron) for any agent
+  rules       the effective policy: every rule, its tier and age threshold, your keep list
+  config      change it: set RULE --tier auto|confirm|info|off --idle 14d | keep PATH | add NAME --path GLOB
 
 Sandbox/testing: --home DIR [--tmp DIR] [--user-tmp DIR] --now EPOCH. With --home, nothing
 outside those dirs is touched and native prune commands are skipped.
@@ -29,14 +31,15 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import agents  # noqa: E402
-from rules import DAY, GIB, HOUR, RULES, Item  # noqa: E402
+import policy  # noqa: E402
+from rules import DAY, GIB, HOUR, Item, kept  # noqa: E402
 
-LOW_FREE_BYTES = 20 * GIB          # warn below this ...
-LOW_FREE_FRACTION = 0.05           # ... or below this fraction free (big disks)
+LOW_FREE_BYTES = 20 * GIB          # default: warn below this ... (config: warn_below_gb)
+LOW_FREE_FRACTION = 0.05           # ... or below this fraction free (config: warn_below_percent)
 CRITICAL_FREE_BYTES = 5 * GIB      # skip probation when this tight
 MIN_IDLE = HOUR                    # never touch anything written in the last hour
-PROBATION = 7 * DAY                # second-chance: armed entries must stay unread this long
-SWEEP_INTERVAL = 3 * HOUR          # hooks sweep at most this often
+PROBATION = 7 * DAY                # default second-chance probation (config: probation_days)
+SWEEP_INTERVAL = 3 * HOUR          # default hook sweep interval (config: sweep_every_hours)
 WARN_INTERVAL = 6 * HOUR           # low-disk warning at most this often per session
 SENTINELS = 64                     # files armed per cache entry
 MARK = "storage-steward"           # state dir name (~/.cache/storage-steward)
@@ -72,6 +75,13 @@ class Ctx:
         host = None if sandbox else os.environ.get("CLAUDE_CODE_HOST_SESSION_ID")
         self.protect_names = {host} if host else set()
         self.state = self.home / ".cache" / MARK
+        self.policy = policy.Policy(self.home, self.real_home)
+        n = self.policy.numbers
+        self.sweep_interval = n["sweep_every_hours"] * HOUR
+        self.probation = n["probation_days"] * DAY
+        raw = self.policy.raw          # only an explicit setting replaces the module default
+        self.warn_bytes = n["warn_below_gb"] * GIB if "warn_below_gb" in raw else LOW_FREE_BYTES
+        self.warn_fraction = n["warn_below_percent"] / 100 if "warn_below_percent" in raw else LOW_FREE_FRACTION
         self.kept = []          # (rule, bytes, reason) reported but not removable
         self._never = {os.path.realpath(self.home / n) for n in NEVER}
 
@@ -123,6 +133,8 @@ class Ctx:
         if self.session and self.session in rp:
             return False
         if any(n in rp for n in self.protect_names):
+            return False
+        if self.policy.keep and (kept(self.home, self.policy.keep, rp) or kept(self.home, self.policy.keep, item.path)):
             return False
         for p in self.protect:
             if rp == p or rp.startswith(p + os.sep) or p.startswith(rp + os.sep):
@@ -200,7 +212,7 @@ class SecondChance:
             return [], sum(i.size for i in items)
         for it in items:
             at = self.armed.get(it.path)
-            if skip_probation or (at is not None and self.ctx.now - at >= PROBATION and not self.was_read(it.path)):
+            if skip_probation or (at is not None and self.ctx.now - at >= self.ctx.probation and not self.was_read(it.path)):
                 ready.append(it)
             elif at is not None and self.was_read(it.path):
                 self.armed.pop(it.path, None)      # in use: rescued, re-armed on a later sweep
@@ -227,18 +239,21 @@ def free_space(ctx):
     return u.free, u.total
 
 
-def is_low(free, total):
-    return free < LOW_FREE_BYTES or free < total * LOW_FREE_FRACTION
+def is_low(free, total, ctx=None):
+    warn_b = ctx.warn_bytes if ctx else LOW_FREE_BYTES
+    warn_f = ctx.warn_fraction if ctx else LOW_FREE_FRACTION
+    return free < warn_b or free < total * warn_f
 
 
 def collect(ctx, tiers, only, apply, skip_probation):
     sc = SecondChance(ctx)
-    out = []   # (rule, ready_items, pending_bytes)
-    for r in RULES:
-        if r.tier not in tiers or (only and r.id not in only):
+    out = []   # (rule, effective tier, ready_items, pending_bytes)
+    for r, tier, days, _ov in ctx.policy.effective():
+        if tier == "off" or tier not in tiers or (only and r.id not in only):
             continue
         try:
-            items = [i for i in r.find(ctx) if i.cmd or r.tier == "info" or ctx.allowed(i)]
+            items = [i for i in r.find(ctx, days if days is not None else 0)
+                     if i.cmd or tier == "info" or ctx.allowed(i)]
         except Exception as e:  # a broken rule must never abort the sweep
             ctx.kept.append((r.id, 0, f"error: {e}"))
             continue
@@ -248,7 +263,7 @@ def collect(ctx, tiers, only, apply, skip_probation):
             ready, pending = sc.filter(dels, apply, skip_probation)
             items = ready + [i for i in items if i.cmd]
         if items or pending:
-            out.append((r, items, pending))
+            out.append((r, tier, items, pending))
     if apply:
         sc.save()
     return out
@@ -294,8 +309,8 @@ def sweep(ctx, tiers, only=None, source="manual", skip_probation=None):
     if skip_probation is None:
         skip_probation = free < CRITICAL_FREE_BYTES
     freed, by_rule = 0, {}
-    for rule, items, _pending in collect(ctx, tiers, only, True, skip_probation):
-        if rule.tier == "info":
+    for rule, tier, items, _pending in collect(ctx, tiers, only, True, skip_probation):
+        if tier == "info":
             continue
         got = 0
         for it in items:
@@ -316,7 +331,7 @@ def sweep(ctx, tiers, only=None, source="manual", skip_probation=None):
 
 def cmd_status(ctx, a):
     free, total = free_space(ctx)
-    low = is_low(free, total)
+    low = is_low(free, total, ctx)
     if a.quiet and not low:
         return 0
     used = 100 * (1 - free / total)
@@ -329,8 +344,8 @@ def cmd_scan(ctx, a):
     tiers = ("auto", "confirm", "info")
     results = collect(ctx, tiers, set(a.only or []), False, a.no_probation)
     if a.json:
-        print(json.dumps([{"rule": r.id, "tier": r.tier, "bytes": sum(i.size for i in its),
-                           "pending": p, "items": len(its)} for r, its, p in results]))
+        print(json.dumps([{"rule": r.id, "tier": tier, "bytes": sum(i.size for i in its),
+                           "pending": p, "items": len(its)} for r, tier, its, p in results]))
         return 0
     free, total = free_space(ctx)
     print(f"disk: {human(free)} free of {human(total)} ({100 * (1 - free / total):.0f}% used)")
@@ -339,8 +354,8 @@ def cmd_scan(ctx, a):
              "info": "INFO (never auto-deleted)"}
     for tier in tiers:
         rows = []
-        for r, its, pending in results:
-            if r.tier != tier:
+        for r, rtier, its, pending in results:
+            if rtier != tier:
                 continue
             size = sum(i.size for i in its)
             if size < 1 << 20 and not pending and not any(i.cmd for i in its):
@@ -365,9 +380,40 @@ def cmd_scan(ctx, a):
             print(f"  ... {len(rows) - a.top} more rules (--top N)")
     for rule, size, why in ctx.kept[:3]:
         print(f"kept: {rule} {human(size)} ({why})")
+    for err in ctx.policy.errors[:3]:
+        print(f"config problem: {err} (steward.py config show)")
     tip = retention_tip(ctx)
     if tip:
         print(tip)
+    return 0
+
+
+def cmd_rules(ctx, a):
+    """The effective policy: every rule with its tier and threshold, then the keep list."""
+    rows = ctx.policy.effective()
+    if a.json:
+        print(json.dumps([{"rule": r.id, "tier": t, "idle_days": d, "label": r.label, "custom": r.custom,
+                           "overridden": ov} for r, t, d, ov in rows] + [{"keep": ctx.policy.keep}]))
+        return 0
+    src = ctx.policy.path if ctx.policy.path.exists() else "built-in defaults (no config file yet)"
+    print(f"policy: {src}")
+    for tier in ("auto", "confirm", "info", "off"):
+        sel = [(r, d, ov) for r, t, d, ov in rows if t == tier]
+        if not sel:
+            continue
+        print(tier.upper())
+        for r, d, ov in sel:
+            when = "—" if d is None else (f"{d * 24:g}h" if d < 1 else f"{d:g}d")
+            mark = "+" if r.custom else ("*" if ov else " ")
+            print(f" {mark}{r.id:<24}{when:>6}  {r.label}")
+    print(f"keep: {', '.join(ctx.policy.keep) or '(nothing extra)'}   (* changed by you, + your own rule)")
+    for err in ctx.policy.errors:
+        print(f"config problem: {err}")
+    return 0
+
+
+def cmd_config(ctx, a):
+    print(policy.edit(ctx.home, ctx.real_home, a))
     return 0
 
 
@@ -458,7 +504,7 @@ def cmd_hook(ctx, a):
         free, total = free_space(ctx)
         stamp = ctx.state / f"warned-{ctx.session or 'x'}"
         warning = ""
-        if is_low(free, total) and (a.self_test or _stamp_due(stamp, WARN_INTERVAL, ctx.now)):
+        if is_low(free, total, ctx) and (a.self_test or _stamp_due(stamp, WARN_INTERVAL, ctx.now)):
             if not a.self_test:
                 _touch(stamp, ctx.now)
             warning = (f"[storage-steward] disk low: {human(free)} free ({100 * free / total:.0f}%). "
@@ -488,7 +534,7 @@ def cmd_hook(ctx, a):
             return 0  # another sweep is running
         free, total = free_space(ctx)
         stamp = ctx.state / "last-sweep"
-        if _stamp_due(stamp, SWEEP_INTERVAL, ctx.now) or is_low(free, total):
+        if _stamp_due(stamp, ctx.sweep_interval, ctx.now) or is_low(free, total, ctx):
             _touch(stamp, ctx.now)
             sweep(ctx, ("auto",), source=f"hook:{a.agent}:{a.event}")
     return 0
@@ -604,12 +650,24 @@ def main(argv=None):
             s.add_argument("--dry-run", action="store_true", help="list what would change; write nothing")
     s = sub.add_parser("schedule"); s.add_argument("action", choices=("install", "uninstall", "status"))
     s.add_argument("--dry-run", action="store_true")
+    s = sub.add_parser("rules", help="show the effective policy"); s.add_argument("--json", action="store_true")
+    c = sub.add_parser("config", help="change what goes and what stays").add_subparsers(dest="action", required=True)
+    c.add_parser("show")
+    s = c.add_parser("set"); s.add_argument("rule"); s.add_argument("--tier", choices=policy.TIERS); s.add_argument("--idle")
+    s = c.add_parser("unset"); s.add_argument("rule")
+    for name in ("keep", "unkeep"):
+        s = c.add_parser(name); s.add_argument("paths", nargs="+")
+    s = c.add_parser("add"); s.add_argument("name"); s.add_argument("--path", action="append", required=True)
+    s.add_argument("--idle", default="30"); s.add_argument("--tier", default="confirm", choices=policy.TIERS)
+    s.add_argument("--label")
+    s = c.add_parser("drop"); s.add_argument("name")
     a = p.parse_args(argv)
     if getattr(a, "only", None):
         a.only = [x for o in a.only for x in o.split(",")]
     ctx = Ctx(a)
     return {"status": cmd_status, "scan": cmd_scan, "sweep": cmd_sweep, "report": cmd_report, "hook": cmd_hook,
-            "install": cmd_install, "uninstall": cmd_uninstall, "schedule": cmd_schedule}[a.cmd](ctx, a)
+            "install": cmd_install, "uninstall": cmd_uninstall, "schedule": cmd_schedule,
+            "rules": cmd_rules, "config": cmd_config}[a.cmd](ctx, a)
 
 
 if __name__ == "__main__":

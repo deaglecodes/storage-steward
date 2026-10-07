@@ -32,6 +32,13 @@ Open `references/targets.md` only when someone asks why a path is safe or what a
 | `S report` | total reclaimed so far (for showing value) |
 | `S install [--agents auto] [--schedule] [--retention 21]` / `S uninstall` | turn automation on or off |
 | `S schedule install` | an OS timer only (launchd, systemd or cron), for agents without hooks |
+| `S rules` | the effective policy: every rule, its tier and age threshold, the keep list |
+| `S config set RULE --tier auto\|confirm\|info\|off --idle 14d` | change one rule (`--idle` takes `14`, `14d` or `6h`) |
+| `S config keep PATH_OR_GLOB…` / `S config unkeep …` | never delete these, whatever the rule |
+| `S config add NAME --path GLOB [--idle 7] [--tier auto]` / `S config drop NAME` | the user's own folders to clean |
+
+Once installed, cleanup is automatic: hooks sweep after sessions, and nobody types `scan` or `sweep`. Those
+two are for when the user asks what's taking space, or approves confirm-tier items.
 
 ## Make it automatic (offer this once)
 
@@ -55,6 +62,29 @@ hooks in each agent's own format:
 - **Safe to repeat:** every edited file is backed up, and existing hooks from other tools are kept.
   `install` is idempotent, and `uninstall` removes only these hooks.
 - **`--retention 21`:** also sets Claude Code's built-in transcript retention.
+
+## Tweak what goes and what stays (when the user asks)
+
+The user's policy lives in `~/.config/storage-steward/config.json`. Change it with `S config`, never by
+hand-editing, so it stays valid. Translate the request into the narrowest change, then confirm it in one
+line. Run `S rules` first only if you need rule names.
+
+| They say | You run |
+|---|---|
+| "never delete my Claude transcripts" | `S config set claude-transcripts --tier off` |
+| "clear task output after 6 hours, not a day" | `S config set claude-task-output --idle 6h` |
+| "just delete old Codex sessions, don't ask" | `S config set codex-sessions --tier auto --idle 45d` |
+| "don't touch ~/models or any .mov file" | `S config keep ~/models '*.mov'` |
+| "also clean my ~/work/*/build folders weekly" | `S config add work-builds --path '~/work/*/build' --idle 7 --tier auto` |
+| "undo that" | `S config unset RULE` / `S config unkeep PATH` / `S config drop NAME` |
+
+Guard rails you can rely on (and should mention when relevant):
+- `keep` beats every rule.
+- Custom rules must name a folder below `~`; `~/*` and paths outside home are refused.
+- Custom rules inside Documents, Desktop, Downloads, Pictures, Movies or Music are capped at confirm, so
+  automatic sweeps never reach into personal folders.
+- A broken config file never breaks a hook. The steward falls back to defaults, and `scan` reports the
+  problem.
 
 ## While you work: don't create the mess
 

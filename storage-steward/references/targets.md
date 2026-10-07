@@ -1,6 +1,8 @@
 # What each rule touches, and why it's safe
 
-Rules are agent-agnostic. They cover Claude Code, the Claude desktop app, Codex, Cursor, Gemini CLI,
+Every threshold and tier below is a default. Users can change any of them with `steward.py config set`,
+protect paths with `config keep`, or add their own rules with `config add` (stored in
+`~/.config/storage-steward/config.json`). Rules are agent-agnostic. They cover Claude Code, the Claude desktop app, Codex, Cursor, Gemini CLI,
 OpenCode and Copilot CLI, plus the dev-tool caches every agent fills.
 
 Read this only when the user asks why something is or isn't deleted. The thresholds are deliberately

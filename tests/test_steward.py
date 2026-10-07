@@ -303,3 +303,84 @@ class MultiAgentTests(Sandbox):
         self.assertTrue("StartInterval" in out or "OnUnitActiveSec" in out)
         self.assertFalse((self.home / "Library/LaunchAgents").exists())
         self.assertFalse((self.home / ".config/systemd").exists())
+
+
+class PolicyTests(Sandbox):
+    """config.json lets people decide what goes and what stays; these prove each knob takes effect."""
+
+    def cfg(self, *args):
+        return self.run_cli("config", *args)
+
+    def test_tier_off_disables_a_rule(self):
+        s = "99999999-2222-3333-4444-555555555555"
+        out = mk(self.ctmp / "-p" / s / "tasks" / "old.output", 4096, age_days=3)
+        self.cfg("set", "claude-task-output", "--tier", "off")
+        self.run_cli("sweep")
+        self.assertTrue(out.exists(), "rule switched off: nothing deleted")
+
+    def test_promote_confirm_rule_to_auto(self):
+        f = mk(self.home / ".codex/sessions/2026/01/02/r.jsonl", 4096, age_days=50)
+        self.run_cli("sweep")
+        self.assertTrue(f.exists(), "confirm tier by default")
+        self.cfg("set", "codex-sessions", "--tier", "auto", "--idle", "45d")
+        self.run_cli("sweep")
+        self.assertFalse(f.exists(), "now swept automatically")
+
+    def test_idle_override_changes_threshold(self):
+        f = mk(self.home / ".claude/debug/x.txt", 4096, age_days=10)
+        self.cfg("set", "claude-debug", "--idle", "14")
+        self.run_cli("sweep")
+        self.assertTrue(f.exists(), "10 days < 14-day threshold")
+        self.cfg("set", "claude-debug", "--idle", "6h")
+        self.run_cli("sweep")
+        self.assertFalse(f.exists())
+
+    def test_keep_protects_paths_and_globs(self):
+        a = self.home / ".npm/_npx/keepme1"
+        b = self.home / ".npm/_npx/other22"
+        for e in (a, b):
+            mk(e / "package.json", 512)
+            age_tree(e, 40)
+        self.cfg("keep", "~/.npm/_npx/keep*")
+        self.run_cli("sweep", "--no-probation")
+        self.assertTrue(a.exists(), "kept by glob")
+        self.assertFalse(b.exists())
+        n = mk(self.home / ".claude/debug/movie.mov", 4096, age_days=30)
+        self.cfg("keep", "*.mov")
+        self.run_cli("sweep")
+        self.assertTrue(n.exists(), "kept by name pattern")
+
+    def test_custom_rule_and_personal_folder_cap(self):
+        build = self.home / "work/app/build"
+        mk(build / "bundle.js", 8192)
+        age_tree(build, 20)
+        rec = mk(self.home / "Desktop/Screen Recording 1.mov", 8192, age_days=60)
+        self.cfg("add", "work-builds", "--path", "~/work/*/build", "--idle", "7", "--tier", "auto")
+        _, out = self.cfg("add", "recordings", "--path", "~/Desktop/Screen Recording*.mov", "--idle", "30", "--tier", "auto")
+        self.assertIn("capped to confirm", out)
+        self.run_cli("sweep")
+        self.assertFalse(build.exists(), "your own auto rule ran")
+        self.assertTrue(rec.exists(), "personal folders are never swept automatically")
+        self.run_cli("sweep", "--tier", "confirm", "--only", "recordings", "--yes")
+        self.assertFalse(rec.exists(), "removed once you said yes")
+
+    def test_broad_or_outside_patterns_refused(self):
+        for bad in ("~/*", "/etc/*", "relative/*"):
+            with self.assertRaises(SystemExit):
+                self.cfg("add", "nope", "--path", bad, "--tier", "auto")
+        self.assertFalse((self.home / ".config/storage-steward/config.json").exists())
+
+    def test_broken_config_never_breaks_hooks(self):
+        p = self.home / ".config/storage-steward/config.json"
+        p.parent.mkdir(parents=True)
+        p.write_text("{not json")
+        code, out = self.run_cli("hook", "prompt")
+        self.assertEqual((code, out), (0, ""))
+        _, out = self.run_cli("scan")
+        self.assertIn("config problem", out)
+
+    def test_rules_listing_shows_changes(self):
+        self.cfg("set", "claude-transcripts", "--tier", "off")
+        _, out = self.run_cli("rules")
+        self.assertIn("OFF", out)
+        self.assertIn("*claude-transcripts", out)

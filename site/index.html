@@ -104,6 +104,26 @@ input[type=range] { width: 100%; accent-color: var(--accent-hi); }
 .toggle input { accent-color: var(--accent-hi); }
 @media (max-width: 900px) { .hero .wrap { grid-template-columns: 1fr; } }
 
+/* film */
+.film { padding-block: clamp(40px, 6vw, 72px) 0; }
+.film figure { margin: 0; display: grid; gap: 14px; }
+.film .frame { background: var(--term); border-radius: 20px; padding: 10px; box-shadow: 0 30px 70px -40px rgb(14 26 43 / 0.6), 0 0 0 1px var(--term-rule); }
+.film video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 12px; background: #0a1018; }
+.film figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; font-size: 0.86rem; color: var(--muted); }
+
+/* your rules */
+.policy { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.prow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--rule); font-size: 0.94rem; }
+.prow:last-child { border-bottom: 0; }
+.prow small { color: var(--muted); font: 0.8rem var(--f-mono); }
+.prow .when { font: 600 0.8rem var(--f-mono); color: var(--muted); min-width: 3.5em; text-align: right; }
+.chip.keep { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
+.chip.off { background: var(--track); color: var(--muted); text-decoration: line-through; }
+.cmds { display: grid; gap: 10px; }
+.cmds .cmd { font-size: 0.84rem; }
+.cmds .say { font-size: 0.9rem; color: var(--muted); }
+@media (max-width: 860px) { .policy { grid-template-columns: 1fr; } }
+
 /* leaks bento */
 .bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; }
 .leak { grid-column: span 2; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 22px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; min-width: 0; }
@@ -218,7 +238,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
     <a class="brand" href="#top" aria-label="storage-steward home"><img src="assets/logo.svg" alt="" width="30" height="30">storage-steward</a>
     <nav aria-label="Main navigation"><ul>
       <li><a href="#leaks">The problem</a></li><li><a href="#how">How it works</a></li>
-      <li><a href="#bench">Benchmarks</a></li><li><a href="#install">Install</a></li></ul></nav>
+      <li><a href="#rules">Your rules</a></li><li><a href="#bench">Benchmarks</a></li><li><a href="#install">Install</a></li></ul></nav>
     <a class="gh" href="https://github.com/deaglecodes/storage-steward"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
   </div>
 </header>
@@ -246,6 +266,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
       </div>
     </div>
   </section>
+
 
   <section id="leaks" aria-labelledby="leaks-h">
     <div class="wrap">
@@ -279,12 +300,40 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
         <div class="layer"><div class="when">After every session</div><h3>Hooks sweep for free</h3>
           <p>Each agent gets hooks in its own format. Claude Code, Codex, Cursor and Gemini CLI start a sweep in the background, at most every 3 hours. Agents without hooks get an OS timer. The prompt check costs 61 ms and prints nothing unless free space drops below max(20 GiB, 5%).</p></div>
         <div class="layer"><div class="when">When it needs you</div><h3>Ask before it matters</h3>
-          <p>History, old projects and clean worktrees are listed with their sizes. Only the ones you approve are removed, with <code>--only rule</code>.</p></div>
+          <p>History, old projects and clean worktrees are listed with their sizes. Only the ones you approve are removed. <a href="#rules">Your rules</a> can move anything between "just do it", "ask me" and "never".</p></div>
       </div>
       <div class="tiers">
         <div class="tier"><span class="chip auto">AUTO</span><h3>Swept without asking</h3><p>Idle task output, sandbox plugin copies, old debug logs, stale npx/uv/pip caches, Xcode DerivedData, updater leftovers, $TMPDIR entries older than 7 days.</p></div>
         <div class="tier"><span class="chip confirm">CONFIRM</span><h3>Needs your OK</h3><p>Transcripts and Codex sessions older than 30 days, clean agent worktrees, <code>node_modules</code> of projects idle 30+ days, old Playwright browsers, Docker build cache.</p></div>
         <div class="tier"><span class="chip info">INFO</span><h3>Reported, never touched</h3><p>Local models, the Cowork VM image, Codex databases, your Cowork outputs, the Trash.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="rules" aria-labelledby="rules-h">
+    <div class="wrap">
+      <div class="sec-head"><div class="eyebrow">Make it yours</div><h2 id="rules-h">Your rules decide what goes and what stays</h2>
+        <p class="lede">Every rule's tier and age threshold is a default. Switch rules off, sweep sooner or later, protect anything, or add your own folders. Tell your agent in plain English, or run one command.</p></div>
+      <div class="policy">
+        <div class="card" aria-label="Example policy">
+          <div class="prow"><span>Background task output<br><small>claude-task-output</small></span><span class="when">6h</span><span class="chip auto">AUTO</span></div>
+          <div class="prow"><span>Desktop-app sandbox copies<br><small>desktop-sandbox-plugins</small></span><span class="when">3d</span><span class="chip auto">AUTO</span></div>
+          <div class="prow"><span>Old Codex sessions<br><small>codex-sessions</small></span><span class="when">45d</span><span class="chip auto">AUTO</span></div>
+          <div class="prow"><span>Claude transcripts<br><small>claude-transcripts</small></span><span class="when">—</span><span class="chip off">OFF</span></div>
+          <div class="prow"><span>~/work/*/build<br><small>your rule: work-builds</small></span><span class="when">7d</span><span class="chip auto">AUTO</span></div>
+          <div class="prow"><span>~/models, *.mov<br><small>keep list</small></span><span class="when">∞</span><span class="chip keep">KEEP</span></div>
+        </div>
+        <div class="cmds">
+          <p class="say">"never delete my transcripts"</p>
+          <div class="cmd"><code id="cmd-r1">steward.py config set claude-transcripts --tier off</code><button class="copy" data-copy="cmd-r1">Copy</button></div>
+          <p class="say">"clear task output after 6 hours"</p>
+          <div class="cmd"><code id="cmd-r2">steward.py config set claude-task-output --idle 6h</code><button class="copy" data-copy="cmd-r2">Copy</button></div>
+          <p class="say">"don't touch ~/models or any .mov"</p>
+          <div class="cmd"><code id="cmd-r3">steward.py config keep ~/models '*.mov'</code><button class="copy" data-copy="cmd-r3">Copy</button></div>
+          <p class="say">"also clean my build folders weekly"</p>
+          <div class="cmd"><code id="cmd-r4">steward.py config add work-builds --path '~/work/*/build' --idle 7 --tier auto</code><button class="copy" data-copy="cmd-r4">Copy</button></div>
+          <p class="note">Your personal folders (Documents, Desktop, Downloads…) are never swept automatically, even by your own rules; they always ask first.</p>
+        </div>
       </div>
     </div>
   </section>
@@ -335,7 +384,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
   <section aria-labelledby="safe-h">
     <div class="wrap">
       <div class="sec-head"><div class="eyebrow">Safety</div><h2 id="safe-h">What it will never do</h2>
-        <p class="lede">These rules are enforced in code, and 17 unit tests cover the guards.</p></div>
+        <p class="lede">These rules are enforced in code, and 25 unit tests cover the guards.</p></div>
       <ul class="never" id="never"></ul>
     </div>
   </section>
