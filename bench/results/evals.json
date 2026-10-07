@@ -1,0 +1,126 @@
+{
+ "iteration-1": {
+  "eval-1-disk-full-cleanup": {
+   "with_skill": {
+    "n": 1,
+    "tokens": 133828,
+    "task_tokens": 30994,
+    "secs": 73.3,
+    "tools": 8,
+    "pass": 100,
+    "freed_mb": [
+     366
+    ],
+    "contaminated": false
+   },
+   "without_skill": {
+    "n": 1,
+    "tokens": 194558,
+    "task_tokens": 91724,
+    "secs": 376.5,
+    "tools": 17,
+    "pass": 83,
+    "freed_mb": [
+     -1
+    ],
+    "contaminated": false
+   }
+  },
+  "eval-2-automate-cleanup": {
+   "with_skill": {
+    "n": 1,
+    "tokens": 141447,
+    "task_tokens": 38613,
+    "secs": 119.5,
+    "tools": 15,
+    "pass": 100,
+    "freed_mb": [],
+    "contaminated": false
+   },
+   "without_skill": {
+    "n": 1,
+    "tokens": 282479,
+    "task_tokens": 179645,
+    "secs": 547.5,
+    "tools": 20,
+    "pass": 100,
+    "freed_mb": [],
+    "contaminated": true
+   }
+  },
+  "eval-3-work-without-mess": {
+   "with_skill": {
+    "n": 1,
+    "tokens": 134916,
+    "task_tokens": 32082,
+    "secs": 114.1,
+    "tools": 9,
+    "pass": 100,
+    "freed_mb": [],
+    "contaminated": false
+   },
+   "without_skill": {
+    "n": 1,
+    "tokens": 127906,
+    "task_tokens": 25072,
+    "secs": 69.6,
+    "tools": 5,
+    "pass": 100,
+    "freed_mb": [],
+    "contaminated": false
+   }
+  }
+ },
+ "iteration-2": {
+  "eval-1-disk-full-cleanup": {
+   "with_skill": {
+    "n": 2,
+    "tokens": 129126,
+    "task_tokens": 26292,
+    "secs": 37.9,
+    "tools": 5,
+    "pass": 100,
+    "freed_mb": [
+     366,
+     366
+    ],
+    "contaminated": false
+   },
+   "without_skill": {
+    "n": 2,
+    "tokens": 165993,
+    "task_tokens": 63159,
+    "secs": 197.1,
+    "tools": 10.5,
+    "pass": 92,
+    "freed_mb": [
+     445,
+     367
+    ],
+    "contaminated": false
+   }
+  },
+  "eval-2-automate-cleanup": {
+   "with_skill": {
+    "n": 2,
+    "tokens": 133436,
+    "task_tokens": 30602,
+    "secs": 95.6,
+    "tools": 10,
+    "pass": 100,
+    "freed_mb": [],
+    "contaminated": false
+   },
+   "without_skill": {
+    "n": 2,
+    "tokens": 315671,
+    "task_tokens": 212837,
+    "secs": 797.0,
+    "tools": 27,
+    "pass": 100,
+    "freed_mb": [],
+    "contaminated": false
+   }
+  }
+ }
+}

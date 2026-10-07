@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<style>body{margin:0}.back{display:inline-flex;gap:8px;align-items:center;font:600 14px/1 system-ui;color:inherit;opacity:.75;text-decoration:none}</style>
+</head><body>
+<title>Storage Steward Benchmarks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column (max 1040px); data blocks sit on quiet surfaces, numbers in mono like a df readout. */
+:root {
+  --bg: #f5f7fa; --surface: #ffffff; --fg: #12161c; --muted: #5a6371; --faint: #8a93a1; --rule: #e1e5eb;
+  --accent: #2a78d6; --s-steward: #2a78d6; --s-nuke: #eb6834; --s-weekly: #1baf7a; --s-none: #9aa1ab;
+  --good: #1f8a4c; --bad: #c8382f; --fill-track: #e9edf2;
+  --f-display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --f-body: "Public Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1216; --surface: #171b21; --fg: #eef1f5; --muted: #a4acb8; --faint: #77808d; --rule: #2a3039;
+  --accent: #3987e5; --s-steward: #3987e5; --s-nuke: #d95926; --s-weekly: #199e70; --s-none: #6b727d;
+  --good: #3fb06e; --bad: #e66767; --fill-track: #232831; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0f1216; --surface: #171b21; --fg: #eef1f5; --muted: #a4acb8; --faint: #77808d; --rule: #2a3039;
+  --accent: #3987e5; --s-steward: #3987e5; --s-nuke: #d95926; --s-weekly: #199e70; --s-none: #6b727d;
+  --good: #3fb06e; --bad: #e66767; --fill-track: #232831; color-scheme: dark; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--f-body); }
+.wrap { max-width: 1040px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 72px; display: grid; gap: 44px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.12; }
+h1 { font-size: clamp(2.2rem, 1.4rem + 3vw, 3.4rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.02rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+.kicker { font: 600 0.74rem/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.08rem; color: var(--muted); }
+.mono, .num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+header { display: grid; gap: 14px; }
+section { display: grid; gap: 16px; min-width: 0; }
+.sec-head { display: grid; gap: 6px; }
+.sec-head p { color: var(--muted); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
+.kpi { background: var(--surface); padding: 18px 18px 16px; display: grid; gap: 4px; align-content: start; }
+.kpi .v { font: 700 2rem/1 var(--f-display); letter-spacing: -0.02em; }
+.kpi .l { font-size: 0.86rem; color: var(--muted); }
+.kpi .v small { font: 600 0.9rem var(--f-mono); color: var(--muted); margin-left: 4px; }
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: space-between; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+.seg button { font: 500 0.84rem var(--f-body); color: var(--muted); background: transparent; border: 0; padding: 7px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.seg button:focus-visible, .linkbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.84rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.sw { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
+.sw.dash { background: repeating-linear-gradient(90deg, var(--s-none) 0 5px, transparent 5px 8px); }
+.chart { position: relative; }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.chart text { font: 11px var(--f-mono); fill: var(--muted); }
+.chart .lab { font: 600 11.5px var(--f-body); fill: var(--fg); }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; font-size: 0.8rem; box-shadow: 0 6px 18px rgb(0 0 0 / 0.12); min-width: 170px; display: grid; gap: 3px; }
+.tip .row { display: flex; justify-content: space-between; gap: 12px; }
+.tip .row b { font: 600 0.8rem var(--f-mono); }
+.linkbtn { font: 500 0.84rem var(--f-body); color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font: 600 0.72rem var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+td.n, th.n { text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+tr.hl td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.pill { display: inline-block; font: 600 0.72rem var(--f-mono); padding: 2px 7px; border-radius: 99px; }
+.pill.good { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
+.pill.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: 0; }
+.drive { display: grid; gap: 12px; }
+.drive-row { display: grid; grid-template-columns: 150px 1fr 88px; gap: 12px; align-items: center; }
+.drive-row .name { font-size: 0.88rem; }
+.bar { height: 22px; background: var(--fill-track); border-radius: 5px; overflow: hidden; position: relative; }
+.bar i { display: block; height: 100%; border-radius: 4px 0 0 4px; }
+.bar.full i { border-radius: 4px; }
+.drive-row .gb { font: 600 0.86rem var(--f-mono); text-align: right; }
+.tokens { display: grid; gap: 18px; }
+.tok-eval { display: grid; gap: 8px; }
+.tok-row { display: grid; grid-template-columns: 120px 1fr 200px; gap: 12px; align-items: center; font-size: 0.86rem; }
+.tok-row .meta { font: 0.8rem var(--f-mono); color: var(--muted); text-align: right; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.grid3 .card p, .note { color: var(--muted); font-size: 0.92rem; }
+ul.caveats { margin: 0; padding-left: 18px; display: grid; gap: 8px; color: var(--muted); max-width: 80ch; }
+.tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.tier .big { font: 700 1.7rem/1 var(--f-display); }
+.tier ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 0.84rem; }
+.tier li { display: flex; justify-content: space-between; gap: 10px; }
+.tier li span:first-child { font-family: var(--f-mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+code { font: 0.86em var(--f-mono); background: var(--fill-track); padding: 1px 5px; border-radius: 4px; }
+footer { color: var(--faint); font-size: 0.82rem; }
+@media (max-width: 640px) {
+  .drive-row { grid-template-columns: 1fr 70px; } .drive-row .bar { grid-column: 1 / -1; grid-row: 2; }
+  .tok-row { grid-template-columns: 1fr; gap: 4px; } .tok-row .meta { text-align: left; }
+}
+@media (prefers-reduced-motion: no-preference) { .bar i { transition: width 400ms ease; } }
+</style>
+
+<div class="wrap">
+  <a class="back" href="./"><img src="assets/logo.svg" width="22" height="22" alt="">storage-steward home</a>
+  <header>
+    <div class="kicker">storage-steward · benchmark · 7 Oct 2026</div>
+    <h1>Storage Steward</h1>
+    <p class="lede">A Claude Code skill that keeps agent leftovers off your disk while you work. These benchmarks measure three things: storage saved over 60 days of heavy agent use, what that cleanup costs in re-downloads and lost files, and how many tokens the skill saves when an agent does the cleanup.</p>
+  </header>
+
+  <section aria-label="Headline results"><div class="kpis" id="kpis"></div></section>
+
+  <section aria-labelledby="h-time">
+    <div class="sec-head">
+      <h2 id="h-time">Disk used by agent leftovers, day by day</h2>
+      <p>60 simulated days of a heavy Claude Code + desktop app + Codex user, replayed on real files. Growth rates come from the GitHub reports and a real developer Mac's measured folders.</p>
+    </div>
+    <div class="card">
+      <div class="toolbar">
+        <div class="seg" role="group" aria-label="Scenario">
+          <button id="sc-typical" aria-pressed="true">Typical heavy user</button>
+          <button id="sc-runaway" aria-pressed="false">With runaway task output</button>
+        </div>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="chart" id="chart"></div>
+      <div><button class="linkbtn" id="tbl-toggle" aria-expanded="false">Show as table</button></div>
+      <div class="tablewrap" id="series-table" hidden></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-drive">
+    <div class="sec-head">
+      <h2 id="h-drive">A 1 TB drive on day 60</h2>
+      <p>The runaway scenario models background-task output that nothing caps (reported at 278–771 GB per session in anthropics/claude-code issues). This is the "my 1 TB Mac is full" complaint.</p>
+    </div>
+    <div class="card drive" id="drive"></div>
+  </section>
+
+  <section aria-labelledby="h-cost">
+    <div class="sec-head">
+      <h2 id="h-cost">What each policy costs</h2>
+      <p>Saving space is easy if you delete everything. The real question is how much you lose doing it. A cache miss means a package or build had to be downloaded or rebuilt again. A lost deliverable means a file the user made in a Cowork session got deleted.</p>
+    </div>
+    <div class="card"><div class="tablewrap" id="cost"></div>
+      <p class="note" id="seed-note"></p></div>
+  </section>
+
+  <section aria-labelledby="h-tok">
+    <div class="sec-head">
+      <h2 id="h-tok">Token efficiency</h2>
+      <p id="tok-intro"></p>
+    </div>
+    <div class="card tokens" id="tokens"></div>
+    <div class="card"><div class="tablewrap" id="tok-table"></div></div>
+  </section>
+
+  <section aria-labelledby="h-mac">
+    <div class="sec-head">
+      <h2 id="h-mac">On a real developer Mac</h2>
+      <p id="mac-intro"></p>
+    </div>
+    <div class="tiers" id="mac"></div>
+  </section>
+
+  <section aria-labelledby="h-how">
+    <div class="sec-head"><h2 id="h-how">How it saves space without costing speed or tokens</h2></div>
+    <div class="grid3">
+      <div class="card"><h3>Prevent while working</h3><p>The skill gives agents five habits: one scratch place, no unbounded background output, copy-on-write clones of <code>node_modules</code> for worktrees, a free-space check before writes over 1 GB, and streaming instead of saving intermediate files.</p></div>
+      <div class="card"><h3>Hooks sweep, zero tokens</h3><p><code>UserPromptSubmit</code> prints only when disk is low. <code>Stop</code> and <code>SessionEnd</code> start a detached sweep, at most every 3 h. The agent never waits on it and never reads its output.</p></div>
+      <div class="card"><h3>Second-chance eviction</h3><p>macOS only updates a file's access time when it's older than the modification time. The sweep "arms" stale cache entries by setting that time back. Any later read moves it forward and the entry is kept. Entries still unread after 7 days are deleted.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-method">
+    <div class="sec-head"><h2 id="h-method">Method and caveats</h2></div>
+    <ul class="caveats" id="caveats"></ul>
+  </section>
+
+  <footer>Sources: anthropics/claude-code issues #26911, #41737, #46479, #92158, #24207; openai/codex #42648, #40371; bestagent.dev "Claude Code is quietly eating your disk". Simulator, fixtures, grader and results are in <code>bench/</code> of the repository; eval summaries are in <code>bench/results/evals.json</code>.</footer>
+</div>
+
+<script>
+const DATA = {"sim": {"series": {"typical": {"none": {"gb": [7.7, 12.1, 17.4, 21.6, 26.8, 31.6, 36.9, 41.6, 46.8, 51.2, 56.6, 60.9, 67.5, 72.2, 77.8, 82.4, 87.6, 92.3, 97.2, 101.2, 106.4, 110.9, 115.7, 120.2, 126.4, 131.5, 136.3, 140.5, 146.2, 150.4, 155.7, 159.8, 164.7, 169.1, 174.1, 179.7, 186.2, 190.8, 195.4, 199.7, 205.0, 209.4, 214.8, 219.1, 224.3, 229.1, 234.3, 238.7, 245.3, 249.8, 255.0, 259.4, 264.0, 268.3, 273.3, 278.1, 283.7, 288.2, 293.1, 297.4], "misses": 0, "miss_gb": 0.0, "lost": 0, "deliv": 104}, "daily-nuke": {"gb": [1.3, 1.5, 2.3, 2.5, 3.3, 4.0, 4.8, 5.0, 5.8, 6.0, 7.3, 7.5, 8.3, 8.5, 9.3, 10.0, 10.8, 11.0, 11.8, 12.0, 13.3, 13.5, 14.3, 14.5, 15.3, 16.0, 16.8, 17.0, 17.8, 18.0, 19.3, 19.4, 20.3, 20.4, 21.3, 21.9, 22.8, 22.9, 23.8, 23.9, 25.3, 25.4, 26.3, 26.4, 27.3, 27.9, 28.8, 28.9, 29.8, 29.9, 31.3, 31.4, 32.3, 32.4, 33.3, 33.9, 34.8, 34.9, 35.8, 35.9], "misses": 878, "miss_gb": 41.8, "lost": 104, "deliv": 104}, "steward": {"gb": [7.7, 10.7, 14.4, 14.4, 16.0, 17.0, 18.5, 19.2, 20.7, 21.1, 22.4, 23.0, 25.8, 26.7, 28.1, 28.9, 30.4, 30.9, 31.5, 32.0, 33.6, 34.7, 35.8, 35.3, 37.1, 38.5, 39.3, 39.9, 41.8, 41.8, 43.4, 43.5, 44.8, 45.4, 46.6, 46.8, 49.0, 49.7, 49.5, 50.2, 51.6, 52.1, 53.4, 53.7, 54.9, 55.1, 56.3, 55.1, 57.6, 58.0, 59.4, 60.0, 60.1, 60.8, 61.9, 62.7, 64.2, 64.6, 65.2, 63.7], "misses": 1, "miss_gb": 0.0, "lost": 0, "deliv": 104}, "steward+weekly": {"gb": [7.7, 10.7, 14.4, 14.4, 16.0, 17.0, 18.5, 19.2, 20.7, 21.1, 22.4, 23.0, 25.8, 24.6, 26.0, 26.8, 28.3, 28.8, 29.5, 29.9, 30.9, 32.0, 33.1, 32.5, 34.3, 35.8, 36.6, 35.0, 37.0, 37.0, 38.6, 38.7, 40.0, 40.6, 38.9, 39.2, 41.3, 42.0, 41.9, 42.6, 43.9, 41.3, 42.6, 42.9, 44.1, 44.3, 45.5, 44.3, 43.1, 43.5, 44.9, 45.6, 45.7, 46.3, 47.4, 43.4, 44.9, 45.3, 45.9, 44.5], "misses": 1, "miss_gb": 0.0, "lost": 0, "deliv": 104}, "steward-age-only": {"gb": [7.7, 10.7, 14.4, 14.4, 16.0, 17.0, 18.5, 19.2, 20.7, 21.1, 22.4, 23.0, 25.8, 26.7, 27.8, 28.7, 30.1, 30.5, 31.1, 31.5, 33.0, 34.2, 35.3, 34.7, 36.5, 38.0, 38.8, 39.3, 41.3, 41.1, 42.6, 42.5, 43.7, 44.1, 45.2, 45.3, 47.3, 48.0, 47.9, 48.6, 49.9, 50.5, 51.8, 52.1, 53.0, 53.5, 54.7, 53.5, 55.9, 56.3, 57.7, 58.4, 58.5, 59.1, 60.2, 61.0, 62.5, 62.9, 63.6, 61.9], "misses": 35, "miss_gb": 0.9, "lost": 0, "deliv": 104}}, "runaway": {"none": {"gb": [141.1, 199.9, 204.7, 208.8, 267.4, 272.3, 277.3, 281.6, 286.5, 291.0, 296.8, 300.9, 307.3, 311.6, 317.0, 321.7, 326.8, 331.2, 336.6, 367.2, 372.5, 377.1, 382.0, 386.2, 392.6, 397.4, 402.3, 406.3, 411.8, 415.9, 421.3, 425.6, 483.6, 617.0, 622.3, 628.0, 634.4, 638.7, 643.9, 648.0, 653.3, 657.8, 662.9, 667.4, 672.3, 677.3, 767.0, 771.5, 777.8, 782.3, 787.8, 792.2, 877.2, 881.3, 886.3, 891.1, 987.3, 991.7, 996.7, 1001.0], "misses": 0, "miss_gb": 0.0, "lost": 0, "deliv": 91}, "daily-nuke": {"gb": [1.3, 1.5, 2.3, 2.5, 3.3, 4.0, 4.8, 5.0, 5.8, 6.0, 7.3, 7.5, 8.3, 8.5, 9.3, 10.0, 10.8, 11.0, 11.8, 12.0, 13.3, 13.5, 14.3, 14.5, 15.3, 16.0, 16.8, 17.0, 17.8, 18.0, 19.3, 19.4, 20.3, 20.4, 21.3, 21.9, 22.8, 22.9, 23.8, 23.9, 25.3, 25.4, 26.3, 26.4, 27.3, 27.9, 28.8, 28.9, 29.8, 29.9, 31.3, 31.4, 32.3, 32.4, 33.3, 33.9, 34.8, 34.9, 35.8, 35.9], "misses": 910, "miss_gb": 42.3, "lost": 91, "deliv": 91}, "steward": {"gb": [141.1, 65.0, 14.0, 14.3, 69.5, 17.0, 18.2, 18.8, 20.3, 21.2, 22.7, 22.7, 25.6, 26.2, 27.9, 28.8, 30.2, 30.5, 32.0, 58.4, 33.7, 34.8, 35.8, 34.9, 37.2, 38.2, 39.4, 39.6, 41.5, 41.8, 43.4, 43.7, 97.8, 174.3, 46.7, 46.7, 48.9, 49.1, 50.0, 50.0, 51.4, 52.0, 53.0, 53.9, 54.4, 55.2, 140.8, 55.1, 57.2, 57.8, 59.5, 59.9, 140.4, 60.5, 61.8, 62.6, 154.7, 64.4, 65.3, 63.7], "misses": 4, "miss_gb": 0.1, "lost": 0, "deliv": 91}, "steward+weekly": {"gb": [141.1, 65.0, 14.0, 14.3, 69.5, 17.0, 18.2, 18.8, 20.3, 21.2, 22.7, 22.7, 25.6, 24.8, 26.5, 27.4, 28.8, 29.1, 30.6, 57.1, 31.0, 32.0, 33.1, 32.2, 34.4, 35.4, 36.6, 34.0, 36.0, 36.3, 37.9, 38.2, 92.3, 168.8, 38.4, 38.4, 40.6, 40.8, 41.7, 41.6, 43.1, 40.7, 41.7, 42.6, 43.1, 43.9, 129.5, 43.8, 42.3, 42.9, 44.6, 45.0, 125.5, 45.6, 46.8, 43.5, 135.6, 45.3, 46.2, 44.6], "misses": 4, "miss_gb": 0.1, "lost": 0, "deliv": 91}, "steward-age-only": {"gb": [141.1, 65.0, 14.0, 14.3, 69.5, 17.0, 18.2, 18.8, 20.3, 21.2, 22.7, 22.7, 25.6, 26.2, 27.6, 28.6, 30.0, 30.2, 31.6, 57.9, 33.2, 34.2, 35.3, 34.4, 36.6, 37.6, 38.8, 39.0, 41.0, 41.0, 42.6, 42.6, 96.6, 173.1, 45.3, 45.2, 47.3, 47.5, 48.4, 48.3, 49.8, 50.4, 51.4, 52.2, 52.6, 53.6, 139.1, 53.5, 55.6, 56.2, 57.9, 58.3, 138.8, 58.9, 60.1, 61.0, 153.1, 62.7, 63.7, 61.8], "misses": 35, "miss_gb": 0.9, "lost": 0, "deliv": 91}}}, "seeds": {"7": {"none": {"d60_gb": 297.4, "saved": 0.0, "misses": 0}, "daily-nuke": {"d60_gb": 35.9, "saved": 87.9, "misses": 878}, "steward": {"d60_gb": 63.7, "saved": 78.6, "misses": 1}, "steward+weekly": {"d60_gb": 44.5, "saved": 85.0, "misses": 1}, "steward-age-only": {"d60_gb": 61.9, "saved": 79.2, "misses": 35}}, "11": {"none": {"d60_gb": 301.0, "saved": 0.0, "misses": 0}, "daily-nuke": {"d60_gb": 35.9, "saved": 88.1, "misses": 904}, "steward": {"d60_gb": 64.1, "saved": 78.7, "misses": 0}, "steward+weekly": {"d60_gb": 50.3, "saved": 83.3, "misses": 0}, "steward-age-only": {"d60_gb": 62.2, "saved": 79.3, "misses": 35}}, "23": {"none": {"d60_gb": 295.6, "saved": 0.0, "misses": 0}, "daily-nuke": {"d60_gb": 35.9, "saved": 87.9, "misses": 915}, "steward": {"d60_gb": 63.8, "saved": 78.4, "misses": 2}, "steward+weekly": {"d60_gb": 42.4, "saved": 85.7, "misses": 2}, "steward-age-only": {"d60_gb": 61.9, "saved": 79.1, "misses": 35}}}}, "hooks": {"prompt_hook_ms_median": 60.8, "prompt_hook_ms_max": 69.2, "prompt_hook_stdout_chars": 0, "stop_hook_ms_median": 66.0, "stop_hook_ms_max": 69.4, "stop_hook_stdout_chars": 0}, "evals": {"iteration-1": {"eval-1-disk-full-cleanup": {"with_skill": {"n": 1, "tokens": 133828, "task_tokens": 30994, "secs": 73.3, "tools": 8, "pass": 100, "freed_mb": [366], "contaminated": false}, "without_skill": {"n": 1, "tokens": 194558, "task_tokens": 91724, "secs": 376.5, "tools": 17, "pass": 83, "freed_mb": [-1], "contaminated": false}}, "eval-2-automate-cleanup": {"with_skill": {"n": 1, "tokens": 141447, "task_tokens": 38613, "secs": 119.5, "tools": 15, "pass": 100, "freed_mb": [], "contaminated": false}, "without_skill": {"n": 1, "tokens": 282479, "task_tokens": 179645, "secs": 547.5, "tools": 20, "pass": 100, "freed_mb": [], "contaminated": true}}, "eval-3-work-without-mess": {"with_skill": {"n": 1, "tokens": 134916, "task_tokens": 32082, "secs": 114.1, "tools": 9, "pass": 100, "freed_mb": [], "contaminated": false}, "without_skill": {"n": 1, "tokens": 127906, "task_tokens": 25072, "secs": 69.6, "tools": 5, "pass": 100, "freed_mb": [], "contaminated": false}}}, "iteration-2": {"eval-1-disk-full-cleanup": {"with_skill": {"n": 2, "tokens": 129126, "task_tokens": 26292, "secs": 37.9, "tools": 5, "pass": 100, "freed_mb": [366, 366], "contaminated": false}, "without_skill": {"n": 2, "tokens": 165993, "task_tokens": 63159, "secs": 197.1, "tools": 10.5, "pass": 92, "freed_mb": [445, 367], "contaminated": false}}, "eval-2-automate-cleanup": {"with_skill": {"n": 2, "tokens": 133436, "task_tokens": 30602, "secs": 95.6, "tools": 10, "pass": 100, "freed_mb": [], "contaminated": false}, "without_skill": {"n": 2, "tokens": 315671, "task_tokens": 212837, "secs": 797.0, "tools": 27, "pass": 100, "freed_mb": [], "contaminated": false}}}}, "overhead": 102834, "mac": {"free_gb": 33.0, "total_gb": 460.4, "tiers": {"auto": {"bytes": 98484224, "pending": 509779968, "rules": [{"rule": "codex-tmp", "mb": 89, "pending_mb": 0}, {"rule": "claude-tmp-sessions", "mb": 5, "pending_mb": 0}, {"rule": "npx-cache", "mb": 0, "pending_mb": 486}]}, "confirm": {"bytes": 5628137472, "pending": 0, "rules": [{"rule": "stale-project-deps", "mb": 3350, "pending_mb": 0}, {"rule": "agent-worktrees", "mb": 1100, "pending_mb": 0}, {"rule": "codex-sessions", "mb": 860, "pending_mb": 0}, {"rule": "desktop-sandboxes-empty", "mb": 45, "pending_mb": 0}, {"rule": "claude-transcripts", "mb": 14, "pending_mb": 0}]}, "info": {"bytes": 13728468992, "pending": 0, "rules": [{"rule": "claude-vm", "mb": 10695, "pending_mb": 0}, {"rule": "codex-db", "mb": 2063, "pending_mb": 0}, {"rule": "sandbox-outputs", "mb": 193, "pending_mb": 0}, {"rule": "local-models", "mb": 141, "pending_mb": 0}]}}}};
+const POL = [
+  { k: "none", name: "No cleanup", c: "--s-none", dash: true },
+  { k: "daily-nuke", name: "Manual daily wipe", c: "--s-nuke" },
+  { k: "steward", name: "Steward hooks", c: "--s-steward" },
+  { k: "steward+weekly", name: "Hooks + weekly OK", c: "--s-weekly" },
+];
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmt = (n, d = 0) => Number(n).toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
+const el = (tag, attrs = {}, html = "") => { const e = document.createElement(tag); Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v)); e.innerHTML = html; return e; };
+const mean = a => a.reduce((s, x) => s + x, 0) / a.length;
+let scenario = "typical";
+
+function kpis() {
+  const seeds = Object.values(DATA.sim.seeds);
+  const savedW = mean(seeds.map(s => s["steward+weekly"].saved)), savedH = mean(seeds.map(s => s.steward.saved));
+  const t = DATA.sim.series.typical;
+  const it = DATA.evals["iteration-2"] || {}, cut = [];
+  Object.values(it).forEach(e => { if (e.with_skill && e.without_skill) cut.push(1 - e.with_skill.task_tokens / e.without_skill.task_tokens); });
+  const tokCut = cut.length ? Math.round(100 * mean(cut)) : null;
+  const items = [
+    [`${Math.round(savedW)}%`, `storage saved by day 60 (hooks + weekly OK); ${Math.round(savedH)}% with hooks alone`],
+    [`${t.steward.lost}<small>vs ${t["daily-nuke"].lost}</small>`, "deliverables lost (steward vs manual daily wipe)"],
+    [`${t.steward.misses}<small>vs ${t["daily-nuke"].misses}</small>`, `cache re-downloads; the daily wipe re-fetched ${fmt(t["daily-nuke"].miss_gb, 1)} GB`],
+    tokCut !== null ? [`${tokCut}%`, "fewer task tokens when an agent cleans up or automates it"] : null,
+    [`0<small>tok</small>`, `per prompt from hooks (${Math.round(DATA.hooks.prompt_hook_ms_median)} ms, silent unless disk is low)`],
+  ].filter(Boolean);
+  document.getElementById("kpis").innerHTML = items.map(([v, l]) => `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join("");
+}
+
+function legend() {
+  document.getElementById("legend").innerHTML = POL.map(p =>
+    `<span><i class="sw${p.dash ? " dash" : ""}" style="${p.dash ? "" : `background:var(${p.c})`}"></i>${p.name}</span>`).join("");
+}
+
+function chart() {
+  const S = DATA.sim.series[scenario], n = S.none.gb.length;
+  const W = 760, H = 330, L = 54, R = 132, T = 14, B = 30;
+  const maxV = Math.max(...POL.map(p => Math.max(...S[p.k].gb)));
+  const step = maxV > 600 ? 200 : maxV > 200 ? 50 : 25, top = Math.ceil(maxV / step) * step;
+  const x = d => L + (d / (n - 1)) * (W - L - R), y = v => T + (1 - v / top) * (H - T - B);
+  let g = "";
+  for (let v = 0; v <= top; v += step) {
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--rule)" stroke-width="1"/>`;
+    g += `<text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v >= 1000 ? "1 TB" : v + " GB"}</text>`;
+  }
+  [1, 15, 30, 45, 60].forEach(d => { g += `<text x="${x(d - 1)}" y="${H - 8}" text-anchor="middle">day ${d}</text>`; });
+  const ends = [];
+  POL.forEach(p => {
+    const pts = S[p.k].gb.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+    g += `<polyline points="${pts}" fill="none" stroke="var(${p.c})" stroke-width="2" stroke-linejoin="round" ${p.dash ? 'stroke-dasharray="5 4"' : ""}/>`;
+    ends.push({ p, v: S[p.k].gb[n - 1] });
+  });
+  ends.sort((a, b) => b.v - a.v);
+  let last = -Infinity;
+  ends.forEach(e => { let yy = y(e.v) + 4; if (yy - last < 15) yy = last + 15; last = yy;
+    g += `<circle cx="${x(n - 1)}" cy="${y(e.v)}" r="3.5" fill="var(${e.p.c})" stroke="var(--surface)" stroke-width="2"/>`;
+    g += `<text class="lab" x="${x(n - 1) + 9}" y="${yy}">${e.p.name} · ${fmt(e.v)} GB</text>`; });
+  g += `<line id="cross" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--faint)" stroke-width="1" visibility="hidden"/>`;
+  g += `<rect id="hit" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent"/>`;
+  const box = document.getElementById("chart");
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Disk used per policy over 60 days, ${scenario} scenario">${g}</svg><div class="tip" hidden></div>`;
+  const svg = box.querySelector("svg"), tip = box.querySelector(".tip"), cross = svg.querySelector("#cross");
+  const move = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+    const d = Math.max(0, Math.min(n - 1, Math.round(((px - L) / (W - L - R)) * (n - 1))));
+    cross.setAttribute("x1", x(d)); cross.setAttribute("x2", x(d)); cross.setAttribute("visibility", "visible");
+    tip.innerHTML = `<div class="kicker">day ${d + 1}</div>` + POL.map(p => `<div class="row"><span><i class="dot" style="background:var(${p.c})"></i>${p.name}</span><b>${fmt(S[p.k].gb[d], 1)} GB</b></div>`).join("");
+    tip.hidden = false;
+    const left = (x(d) / W) * r.width, w = tip.offsetWidth;
+    tip.style.left = Math.min(Math.max(0, left + 14), r.width - w) + "px"; tip.style.top = "10px";
+  };
+  svg.querySelector("#hit").addEventListener("pointermove", move);
+  svg.querySelector("#hit").addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+  seriesTable();
+}
+
+function seriesTable() {
+  const S = DATA.sim.series[scenario], days = [1, 7, 14, 30, 45, 60];
+  document.getElementById("series-table").innerHTML = `<table><thead><tr><th>Policy</th>${days.map(d => `<th class="n">Day ${d}</th>`).join("")}</tr></thead><tbody>` +
+    POL.map(p => `<tr><td><i class="dot" style="background:var(${p.c})"></i>${p.name}</td>${days.map(d => `<td class="n">${fmt(S[p.k].gb[d - 1], 1)} GB</td>`).join("")}</tr>`).join("") + "</tbody></table>";
+}
+
+function drive() {
+  const S = DATA.sim.series.runaway, cap = 1000;
+  document.getElementById("drive").innerHTML = POL.map(p => {
+    const v = S[p.k].gb[S[p.k].gb.length - 1], pct = Math.min(100, (v / cap) * 100);
+    return `<div class="drive-row"><div class="name"><i class="dot" style="background:var(${p.c})"></i>${p.name}</div>
+      <div class="bar${pct >= 99.5 ? " full" : ""}" role="img" aria-label="${p.name}: ${fmt(v)} GB of 1 TB"><i style="width:${pct}%;background:var(${p.c})"></i></div>
+      <div class="gb">${v >= cap ? "FULL" : fmt(v) + " GB"}</div></div>`; }).join("") +
+    `<p class="note">Without cleanup the runaway scenario reaches ${fmt(S.none.gb[S.none.gb.length - 1])} GB, which is more than the whole drive. On a real Mac, writes would start failing before day 60.</p>`;
+}
+
+function cost() {
+  const rows = [...POL, { k: "steward-age-only", name: "Ablation: age-only (no second chance)", c: "--faint" }];
+  const t = DATA.sim.series.typical, r = DATA.sim.series.runaway;
+  const pct = (S, k) => Math.round(100 * (1 - S[k].gb.at(-1) / S.none.gb.at(-1)));
+  document.getElementById("cost").innerHTML = `<table><thead><tr><th>Policy</th><th class="n">Day 60 (typical)</th><th class="n">Saved</th><th class="n">Day 60 (runaway)</th><th class="n">Saved</th><th class="n">Cache misses</th><th class="n">Re-downloaded</th><th class="n">Deliverables lost</th></tr></thead><tbody>` +
+    rows.map(p => `<tr class="${p.k.startsWith("steward") && p.k !== "steward-age-only" ? "hl" : ""}"><td><i class="dot" style="background:var(${p.c})"></i>${p.name}</td>
+      <td class="n">${fmt(t[p.k].gb.at(-1), 1)} GB</td><td class="n">${p.k === "none" ? "—" : pct(t, p.k) + "%"}</td>
+      <td class="n">${fmt(r[p.k].gb.at(-1), 1)} GB</td><td class="n">${p.k === "none" ? "—" : pct(r, p.k) + "%"}</td>
+      <td class="n">${t[p.k].misses}</td><td class="n">${fmt(t[p.k].miss_gb, 1)} GB</td>
+      <td class="n"><span class="pill ${t[p.k].lost ? "bad" : "good"}">${t[p.k].lost} / ${t[p.k].deliv}</span></td></tr>`).join("") + "</tbody></table>";
+  const s = DATA.sim.seeds, k = Object.keys(s);
+  document.getElementById("seed-note").innerHTML = `Seed check (typical, day 60): hooks alone saved ${k.map(x => s[x].steward.saved + "%").join(", ")} and hooks + weekly OK saved ${k.map(x => s[x]["steward+weekly"].saved + "%").join(", ")} across seeds ${k.join(", ")}. The ablation row shows what second-chance eviction buys: about 2 GB less saved, in exchange for 35 fewer cache misses.`;
+}
+
+function tokens() {
+  const it2 = DATA.evals["iteration-2"] || {}, it1 = DATA.evals["iteration-1"] || {};
+  const names = { "eval-1-disk-full-cleanup": "Free up space now", "eval-2-automate-cleanup": "Make cleanup automatic", "eval-3-work-without-mess": "Normal analysis task" };
+  document.getElementById("tok-intro").textContent = `Each task ran in a disposable fake Mac home, once with the skill and once without, in separate subagents. A subagent spends ${fmt(DATA.overhead)} tokens before doing anything (measured with a no-op run), so the bars show task tokens: total minus that fixed overhead. Iteration 2 used two runs per configuration with the answer key moved out of the sandbox.`;
+  const evs = Object.keys(it2).length ? it2 : it1;
+  const maxT = Math.max(...Object.values(evs).flatMap(e => Object.values(e).map(c => c.task_tokens)));
+  document.getElementById("tokens").innerHTML = Object.entries(evs).map(([ev, c]) => `<div class="tok-eval"><h3>${names[ev] || ev}</h3>` +
+    [["with_skill", "With skill", "--s-steward"], ["without_skill", "Without", "--s-nuke"]].filter(([k]) => c[k]).map(([k, label, col]) => {
+      const v = c[k]; return `<div class="tok-row"><div>${label}</div><div class="bar" role="img" aria-label="${label}: ${fmt(v.task_tokens)} task tokens"><i style="width:${(100 * v.task_tokens / maxT).toFixed(1)}%;background:var(${col})"></i></div>
+        <div class="meta">${fmt(v.task_tokens / 1000, 1)}k tok · ${fmt(v.secs)} s · ${fmt(v.tools, 1)} calls</div></div>`; }).join("") + `</div>`).join("");
+  const row = (it, ev, c) => { const w = c.with_skill, o = c.without_skill; if (!w || !o) return "";
+    return `<tr><td>${it.replace("iteration-", "Iter ")}</td><td>${names[ev] || ev}${o.contaminated ? ' <span class="pill bad">baseline saw answer key</span>' : ""}</td>
+      <td class="n">${w.n}+${o.n}</td><td class="n">${fmt(w.task_tokens / 1000, 1)}k</td><td class="n">${fmt(o.task_tokens / 1000, 1)}k</td>
+      <td class="n">${Math.round(100 * (1 - w.task_tokens / o.task_tokens))}%</td><td class="n">${fmt(w.secs)} / ${fmt(o.secs)} s</td><td class="n">${w.pass}% / ${o.pass}%</td>
+      <td class="n">${w.freed_mb.length ? fmt(mean(w.freed_mb)) + " / " + fmt(Math.max(0, mean(o.freed_mb))) + " MB" : "—"}</td></tr>`; };
+  document.getElementById("tok-table").innerHTML = `<table><thead><tr><th>Iter</th><th>Task</th><th class="n">Runs</th><th class="n">Task tokens (skill)</th><th class="n">Without</th><th class="n">Cut</th><th class="n">Time skill / without</th><th class="n">Pass rate</th><th class="n">Space freed</th></tr></thead><tbody>` +
+    ["iteration-1", "iteration-2"].flatMap(it => Object.entries(DATA.evals[it] || {}).map(([ev, c]) => row(it, ev, c))).join("") + "</tbody></table>";
+}
+
+function mac() {
+  const m = DATA.mac, gb = b => fmt(b / 2 ** 30, 2);
+  document.getElementById("mac-intro").textContent = `A read-only scan of the author's Mac (${fmt(m.free_gb, 1)} GB free of ${fmt(m.total_gb)} GB). Its temp folders were fairly clean at the time. Most of what could go needed the user's OK, and the biggest single item was the Cowork VM image, which the tool never deletes.`;
+  const label = { auto: "Auto: sweeps reclaim this", confirm: "Confirm: needs your OK", info: "Info: never auto-deleted" };
+  document.getElementById("mac").innerHTML = ["auto", "confirm", "info"].map(t => { const d = m.tiers[t]; if (!d) return "";
+    return `<div class="card tier"><div class="kicker">${label[t]}</div><div class="big">${gb(d.bytes)} GB</div><ul>` +
+      d.rules.slice(0, 5).map(r => `<li><span>${r.rule}</span><span class="num">${r.mb ? fmt(r.mb) + " MB" : ""}${r.pending_mb ? " +" + fmt(r.pending_mb) + " MB on probation" : ""}</span></li>`).join("") + `</ul></div>`; }).join("");
+}
+
+function caveats() {
+  const items = [
+    "The simulation replays the workload on real files scaled 1:4096 (sparse files) and runs the actual skill code against simulated clocks. Folder layouts are realistic, but the event rates are modeled, not measured from one real user.",
+    "The runaway rate (3.3% of sessions write a 20–150 GB task output) follows one reporter's \"6 incidents in 30 days\". Without runaways, hooks alone save about 79%; with them, 94%.",
+    "The manual daily wipe deletes temp folders, caches and whole desktop sandboxes (the workaround posted in issue #92158). That's why it loses every Cowork deliverable and re-downloads about 42 GB over 60 days.",
+    "Iteration 1's baselines could read the fixture's answer key, and two of them did. Iteration 2 moved it out of the sandbox and ran each configuration twice.",
+    "The normal analysis task didn't separate the two configurations. Plain Claude also streamed the 2M log lines and left nothing behind. In real use the skill wouldn't load for that task; only its ~190-token description is in context.",
+    `Hooks were measured over 20 runs: ${Math.round(DATA.hooks.prompt_hook_ms_median)} ms median for the prompt check and ${Math.round(DATA.hooks.stop_hook_ms_median)} ms for the stop hook, with 0 bytes printed when the disk is healthy.`,
+    "In the iteration-1 cleanup baseline, Claude Code's own rm safety check blocked the agent's deletes. It moved files to Trash instead, so it freed 0 bytes. The skill's script deletes in Python, behind its own guards: a strict root, a never-delete list, no symlink following, the current session and anything under 1 hour old protected. 13 unit tests cover those guards.",
+  ];
+  document.getElementById("caveats").innerHTML = items.map(t => `<li>${t}</li>`).join("");
+}
+
+function setScenario(s) {
+  scenario = s;
+  document.getElementById("sc-typical").setAttribute("aria-pressed", s === "typical");
+  document.getElementById("sc-runaway").setAttribute("aria-pressed", s === "runaway");
+  chart();
+}
+document.getElementById("sc-typical").addEventListener("click", () => setScenario("typical"));
+document.getElementById("sc-runaway").addEventListener("click", () => setScenario("runaway"));
+document.getElementById("tbl-toggle").addEventListener("click", e => {
+  const t = document.getElementById("series-table"); t.hidden = !t.hidden;
+  e.target.setAttribute("aria-expanded", String(!t.hidden)); e.target.textContent = t.hidden ? "Show as table" : "Hide table";
+});
+kpis(); legend(); chart(); drive(); cost(); tokens(); mac(); caveats();
+</script>
+
+</body></html>

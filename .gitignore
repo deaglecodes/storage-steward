@@ -1,0 +1,10 @@
+# local eval runs (contain machine-specific paths and transcripts)
+storage-steward-workspace/
+storage-steward-benchmark.html
+*.skill
+bench/results/mac_scan_raw.json
+assets/_preview.html
+.claude/
+__pycache__/
+*.pyc
+.DS_Store

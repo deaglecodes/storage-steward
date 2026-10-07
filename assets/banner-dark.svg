@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 200" role="img" aria-label="storage-steward">
+  
+  <g transform="translate(40 40) scale(1.875)">  <rect x="2.5" y="2.5" width="59" height="59" rx="14.5" fill="#0E1A2B" stroke="#FFFFFF" stroke-opacity="0.12"/>
+  <circle cx="32" cy="32" r="17" fill="none" stroke="#21324B" stroke-width="7"/>
+  <path d="M32.0 15.0 A17 17 0 1 1 16.025 37.814" fill="none" stroke="#E9EFF8" stroke-width="7"/>
+  <path d="M12.389 30.758 A17 17 0 0 1 24.125 13.997" fill="none" stroke="#4D8DFF" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="32" cy="32" r="3.6" fill="#4D8DFF"/>
+</g>
+  <text x="196" y="104" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="58" font-weight="800" letter-spacing="-1.5" fill="#EEF2F7">storage-steward</text>
+  <text x="198" y="146" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" fill="#9AA6B6">Your agents leave files behind. This cleans up as they work.</text>
+</svg>

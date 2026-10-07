@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0E1A2B"/>
+  <rect x="0" y="0" width="1200" height="630" fill="url(#g)"/>
+  <defs><radialGradient id="g" cx="0.85" cy="0.1" r="0.9"><stop offset="0" stop-color="#4D8DFF" stop-opacity="0.22"/><stop offset="1" stop-color="#4D8DFF" stop-opacity="0"/></radialGradient></defs>
+  <g transform="translate(80 84) scale(1.6)">  <rect x="2.5" y="2.5" width="59" height="59" rx="14.5" fill="#0E1A2B" stroke="#FFFFFF" stroke-opacity="0.12"/>
+  <circle cx="32" cy="32" r="17" fill="none" stroke="#21324B" stroke-width="7"/>
+  <path d="M32.0 15.0 A17 17 0 1 1 16.025 37.814" fill="none" stroke="#E9EFF8" stroke-width="7"/>
+  <path d="M12.389 30.758 A17 17 0 0 1 24.125 13.997" fill="none" stroke="#4D8DFF" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="32" cy="32" r="3.6" fill="#4D8DFF"/>
+</g>
+  <text x="80" y="300" font-family="-apple-system, 'SF Pro Display', Helvetica, Arial, sans-serif" font-size="76" font-weight="800" letter-spacing="-2.5" fill="#EEF2F7">storage-steward</text>
+  <text x="82" y="356" font-family="-apple-system, 'SF Pro Display', Helvetica, Arial, sans-serif" font-size="30" fill="#9AA6B6">Your agents leave files behind.</text>
+  <text x="82" y="396" font-family="-apple-system, 'SF Pro Display', Helvetica, Arial, sans-serif" font-size="30" fill="#9AA6B6">This cleans up as they work.</text>
+  <g font-family="'SF Mono', Menlo, monospace" font-size="22">
+    <text x="82" y="520" fill="#EEF2F7">79–85%</text><text x="180" y="520" fill="#7F8EA3">less disk</text>
+    <text x="340" y="520" fill="#EEF2F7">0</text><text x="362" y="520" fill="#7F8EA3">files lost</text>
+    <text x="520" y="520" fill="#EEF2F7">0</text><text x="542" y="520" fill="#7F8EA3">tokens / prompt</text>
+  </g>
+  <g transform="translate(760 150)">
+    <rect width="360" height="300" rx="22" fill="#060B12" stroke="#22334D"/>
+    <g font-family="'SF Mono', Menlo, monospace" font-size="17">
+      <text x="28" y="48" fill="#7F8EA3">df -h · day 60 · 1 TB</text>
+      <text x="28" y="104" fill="#DCE6F3">No cleanup</text><text x="332" y="104" text-anchor="end" fill="#DCE6F3">297 GB</text>
+      <rect x="28" y="118" width="304" height="14" rx="4" fill="#15233A"/><rect x="28" y="118" width="90" height="14" rx="4" fill="#9AA1AB"/>
+      <text x="28" y="176" fill="#DCE6F3">Manual daily wipe</text><text x="332" y="176" text-anchor="end" fill="#DCE6F3">36 GB</text>
+      <rect x="28" y="190" width="304" height="14" rx="4" fill="#15233A"/><rect x="28" y="190" width="11" height="14" rx="4" fill="#E8622C"/>
+      <text x="28" y="248" fill="#DCE6F3">storage-steward</text><text x="332" y="248" text-anchor="end" fill="#DCE6F3">64 GB</text>
+      <rect x="28" y="262" width="304" height="14" rx="4" fill="#15233A"/><rect x="28" y="262" width="20" height="14" rx="4" fill="#4D8DFF"/>
+    </g>
+  </g>
+</svg>

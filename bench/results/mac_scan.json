@@ -1,0 +1,84 @@
+{
+ "free_gb": 33.0,
+ "total_gb": 460.4,
+ "tiers": {
+  "auto": {
+   "bytes": 98484224,
+   "pending": 509779968,
+   "rules": [
+    {
+     "rule": "codex-tmp",
+     "mb": 89,
+     "pending_mb": 0
+    },
+    {
+     "rule": "claude-tmp-sessions",
+     "mb": 5,
+     "pending_mb": 0
+    },
+    {
+     "rule": "npx-cache",
+     "mb": 0,
+     "pending_mb": 486
+    }
+   ]
+  },
+  "confirm": {
+   "bytes": 5628137472,
+   "pending": 0,
+   "rules": [
+    {
+     "rule": "stale-project-deps",
+     "mb": 3350,
+     "pending_mb": 0
+    },
+    {
+     "rule": "agent-worktrees",
+     "mb": 1100,
+     "pending_mb": 0
+    },
+    {
+     "rule": "codex-sessions",
+     "mb": 860,
+     "pending_mb": 0
+    },
+    {
+     "rule": "desktop-sandboxes-empty",
+     "mb": 45,
+     "pending_mb": 0
+    },
+    {
+     "rule": "claude-transcripts",
+     "mb": 14,
+     "pending_mb": 0
+    }
+   ]
+  },
+  "info": {
+   "bytes": 13728468992,
+   "pending": 0,
+   "rules": [
+    {
+     "rule": "claude-vm",
+     "mb": 10695,
+     "pending_mb": 0
+    },
+    {
+     "rule": "codex-db",
+     "mb": 2063,
+     "pending_mb": 0
+    },
+    {
+     "rule": "sandbox-outputs",
+     "mb": 193,
+     "pending_mb": 0
+    },
+    {
+     "rule": "local-models",
+     "mb": 141,
+     "pending_mb": 0
+    }
+   ]
+  }
+ }
+}
