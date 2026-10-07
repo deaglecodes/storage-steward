@@ -23,6 +23,8 @@ work. It works with Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Copilot CL
 reads `SKILL.md`. It runs from background hooks (or an OS timer), so it costs zero tokens per prompt, and it
 never deletes anything you'd miss. You stop having to clear disk space every morning.
 
+<p align="center"><a href="https://deaglecodes.github.io/storage-steward/#film"><img src="assets/film-poster.jpg" alt="Watch the 45-second launch film" width="760"></a><br><sub>▶ <a href="https://deaglecodes.github.io/storage-steward/#film">Watch the 45-second launch film</a> (made with the <a href="https://github.com/Rieranthony/product-film-skill">product-film</a> skill)</sub></p>
+
 | Agent | Skill location | Automatic cleanup |
 |---|---|---|
 | Claude Code | `~/.claude/skills` (symlink) | hooks: `UserPromptSubmit`, `Stop`, `SessionEnd` |
