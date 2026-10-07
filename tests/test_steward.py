@@ -132,6 +132,7 @@ class RuleTests(Sandbox):
             mk(d / "a.txt")
             subprocess.run(["git", "-C", str(d), "add", "."], check=True)
             subprocess.run(["git", "-C", str(d), "-c", "user.email=t@t", "-c", "user.name=t",
+                            "-c", "maintenance.auto=false", "-c", "gc.auto=0",   # no detached writers
                             "commit", "-qm", "x"], check=True)
             if dirty:
                 (d / "a.txt").write_text("changed")

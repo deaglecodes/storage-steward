@@ -202,7 +202,8 @@ class World:
         import subprocess
         self.put(wt / "README.md", 4096, t)
         (wt / ".gitignore").write_text("node_modules/\n")
-        git = ["git", "-C", str(wt), "-c", "user.email=s@s", "-c", "user.name=s"]
+        git = ["git", "-C", str(wt), "-c", "user.email=s@s", "-c", "user.name=s",
+               "-c", "maintenance.auto=false", "-c", "gc.auto=0"]      # no detached writers
         subprocess.run(["git", "init", "-q", str(wt)], check=True)
         subprocess.run(git + ["add", "."], check=True)
         subprocess.run(git + ["commit", "-qm", "wt"], check=True)
@@ -212,7 +213,10 @@ class World:
             self.dirty_wts.append(wt)
         for root, dirs, files in os.walk(wt):
             for n in dirs + files:
-                os.utime(os.path.join(root, n), (t, t), follow_symlinks=False)
+                try:
+                    os.utime(os.path.join(root, n), (t, t), follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
         os.utime(wt, (t, t))
 
     # ---- policies

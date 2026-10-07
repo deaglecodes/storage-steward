@@ -32,14 +32,18 @@ def age(path: Path, age_days: float):
     t = NOW - age_days * DAY
     for root, dirs, files in os.walk(path):
         for n in dirs + files:
-            os.utime(os.path.join(root, n), (t, t), follow_symlinks=False)
+            try:
+                os.utime(os.path.join(root, n), (t, t), follow_symlinks=False)
+            except FileNotFoundError:
+                pass
     os.utime(path, (t, t))
 
 
 def git_worktree(d: Path, dirty: bool, age_days: float):
     put(d / "src/app.ts", 0, 0, "export const x = 1;\n")
     put(d / ".gitignore", 0, 0, "node_modules/\n")
-    g = ["git", "-C", str(d), "-c", "user.email=a@b", "-c", "user.name=a"]
+    g = ["git", "-C", str(d), "-c", "user.email=a@b", "-c", "user.name=a",
+         "-c", "maintenance.auto=false", "-c", "gc.auto=0"]
     subprocess.run(["git", "init", "-q", str(d)], check=True)
     subprocess.run(g + ["add", "."], check=True)
     subprocess.run(g + ["commit", "-qm", "init"], check=True)
