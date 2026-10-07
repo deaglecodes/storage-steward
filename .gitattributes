@@ -1,0 +1,4 @@
+docs/** linguist-documentation
+site/** linguist-documentation
+bench/report_template.html linguist-documentation
+*.svg linguist-generated
