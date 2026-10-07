@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""storage-steward: keep agent + dev-tool disk usage in check, with tiny output.
+"""storage-steward: keep coding-agent + dev-tool disk usage in check, with tiny output.
 
   status      one line of free space (--quiet: print only when low)
   scan        dry run: what a sweep would reclaim, by tier (<= ~15 lines)
   sweep       reclaim auto tier; add --tier confirm --yes [--only RULE] after the user agrees
   report      total reclaimed so far (ledger)
-  hook EVENT  Claude Code hook entry point: prompt | stop | session-end
-  install     add hooks to ~/.claude/settings.json (backup first); uninstall removes them
+  hook EVENT  hook entry point for any agent: prompt | stop | session-end  [--agent NAME]
+  install     link the skill + add hooks for detected agents (Claude Code, Codex, Cursor, Gemini CLI)
+              [--agents LIST] [--schedule]; uninstall removes them
+  schedule    install | uninstall | status of an OS timer (launchd/systemd/cron) for any agent
 
 Sandbox/testing: --home DIR [--tmp DIR] [--user-tmp DIR] --now EPOCH. With --home, nothing
 outside those dirs is touched and native prune commands are skipped.
@@ -26,6 +28,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import agents  # noqa: E402
 from rules import DAY, GIB, HOUR, RULES, Item  # noqa: E402
 
 LOW_FREE_BYTES = 20 * GIB          # warn below this ...
@@ -36,7 +39,7 @@ PROBATION = 7 * DAY                # second-chance: armed entries must stay unre
 SWEEP_INTERVAL = 3 * HOUR          # hooks sweep at most this often
 WARN_INTERVAL = 6 * HOUR           # low-disk warning at most this often per session
 SENTINELS = 64                     # files armed per cache entry
-MARK = "storage-steward"           # identifies our hook entries in settings.json
+MARK = "storage-steward"           # state dir name (~/.cache/storage-steward)
 NEVER = ("", "Documents", "Desktop", "Downloads", "Pictures", "Movies", "Music", "Library",
          ".ssh", ".gnupg", ".claude", ".claude/settings.json", ".claude.json", ".claude/memory",
          ".claude/skills", ".claude/plugins", ".codex", ".codex/auth.json", ".codex/config.toml")
@@ -62,7 +65,8 @@ class Ctx:
         ut = a.user_tmp or (None if sandbox else (os.environ.get("TMPDIR") or tempfile.gettempdir()))
         self.user_tmp = Path(ut).resolve() if ut else None
         self.cwd = Path(a.cwd).resolve() if getattr(a, "cwd", None) else None
-        self.session = getattr(a, "session", None) or (None if sandbox else os.environ.get("CLAUDE_CODE_SESSION_ID"))
+        self.session = getattr(a, "session", None) or (None if sandbox else (
+            os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("GEMINI_SESSION_ID")))
         protect = list(getattr(a, "protect", None) or [])
         self.protect = [os.path.realpath(p) for p in protect]
         host = None if sandbox else os.environ.get("CLAUDE_CODE_HOST_SESSION_ID")
@@ -427,24 +431,43 @@ def _touch(path: Path, now: float):
     os.utime(path, (now, now))
 
 
+# agents whose hooks must print JSON for these events (Claude/Codex prompt hooks take plain text)
+JSON_OUT = {"codex": {"stop"}, "cursor": {"stop", "session-end"}, "gemini": {"prompt", "stop", "session-end"}}
+
+
+def _emit(agent: str, event: str, warning: str = ""):
+    if agent == "gemini":
+        out = {"hookSpecificOutput": {"hookEventName": "BeforeAgent", "additionalContext": warning}} if warning else {}
+        print(json.dumps(out))
+    elif warning:
+        print(warning)
+    elif event in JSON_OUT.get(agent, ()):
+        print("{}")
+
+
 def cmd_hook(ctx, a):
     try:
         data = json.loads(sys.stdin.read() or "{}") if not sys.stdin.isatty() else {}
     except ValueError:
         data = {}
-    ctx.session = data.get("session_id") or ctx.session
-    if data.get("cwd"):
-        ctx.cwd = Path(data["cwd"]).resolve()
+    ctx.session = data.get("session_id") or data.get("conversation_id") or ctx.session
+    cwd = data.get("cwd") or (data.get("workspace_roots") or [None])[0]
+    if cwd:
+        ctx.cwd = Path(cwd).resolve()
     if a.event == "prompt":
         free, total = free_space(ctx)
         stamp = ctx.state / f"warned-{ctx.session or 'x'}"
+        warning = ""
         if is_low(free, total) and (a.self_test or _stamp_due(stamp, WARN_INTERVAL, ctx.now)):
             if not a.self_test:
                 _touch(stamp, ctx.now)
-            print(f"[storage-steward] disk low: {human(free)} free "
-                  f"({100 * free / total:.0f}%). Before big writes, run the storage-steward skill's scan.")
+            warning = (f"[storage-steward] disk low: {human(free)} free ({100 * free / total:.0f}%). "
+                       "Before big writes, run the storage-steward skill's scan.")
+        _emit(a.agent, a.event, warning)
         return 0
-    # stop / session-end: detach so the agent never waits on cleanup
+    # stop / session-end: answer the agent at once, sweep in a detached process
+    if not a.foreground:
+        _emit(a.agent, a.event)
     if a.self_test:
         return 0      # install's self-test: measure the hook path, never start a sweep
     if not a.foreground:
@@ -453,7 +476,7 @@ def cmd_hook(ctx, a):
                           ("--now", a.now), ("--session", ctx.session), ("--cwd", ctx.cwd)):
             if val:
                 args += [flag, str(val)]
-        args += ["hook", a.event, "--foreground"]
+        args += ["hook", a.event, "--agent", a.agent, "--foreground"]
         subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
         return 0
@@ -467,99 +490,84 @@ def cmd_hook(ctx, a):
         stamp = ctx.state / "last-sweep"
         if _stamp_due(stamp, SWEEP_INTERVAL, ctx.now) or is_low(free, total):
             _touch(stamp, ctx.now)
-            sweep(ctx, ("auto",), source=f"hook:{a.event}")
+            sweep(ctx, ("auto",), source=f"hook:{a.agent}:{a.event}")
     return 0
 
 
-def _settings_path(a):
-    return Path(a.settings or os.path.expanduser("~/.claude/settings.json"))
-
-
-def _our_hooks():
-    me = f"python3 '{os.path.abspath(__file__)}'"
-    return {
-        "UserPromptSubmit": {"type": "command", "command": f"{me} hook prompt", "timeout": 10},
-        "Stop": {"type": "command", "command": f"{me} hook stop", "timeout": 10},
-        "SessionEnd": {"type": "command", "command": f"{me} hook session-end", "timeout": 10},
-    }
-
-
-def _ours(command: str) -> bool:
-    return MARK in command or "steward.py' hook " in command
-
-
-def _strip(settings):
-    hooks = settings.get("hooks", {})
-    for ev in list(hooks):
-        groups = []
-        for g in hooks[ev]:
-            hs = [h for h in g.get("hooks", []) if not _ours(h.get("command", ""))]
-            if hs:
-                groups.append({**g, "hooks": hs})
-        if groups:
-            hooks[ev] = groups
-        else:
-            hooks.pop(ev)
-    if not hooks:
-        settings.pop("hooks", None)
-    return settings
-
-
-def _write_settings(path: Path, settings):
-    if path.exists():
-        shutil.copy2(path, path.with_name(path.name + f".bak-{int(time.time())}"))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(settings, indent=2) + "\n")
-    os.replace(tmp, path)
-
-
-def cmd_install(ctx, a):
-    path = _settings_path(a)
-    try:
-        settings = json.loads(path.read_text()) if path.exists() else {}
-    except ValueError:
-        print(f"refusing: {path} is not valid JSON")
-        return 2
-    settings = _strip(settings)
-    hooks = settings.setdefault("hooks", {})
-    for ev, h in _our_hooks().items():
-        hooks.setdefault(ev, []).append({"hooks": [h]})
-    if a.retention and "cleanupPeriodDays" not in settings:
-        settings["cleanupPeriodDays"] = a.retention
-    _write_settings(path, settings)
-    extra = f", cleanupPeriodDays={settings.get('cleanupPeriodDays')}" if a.retention else ""
-    print(f"installed hooks (UserPromptSubmit, Stop, SessionEnd) in {path}{extra}; backup saved; re-run safe")
-    print(_self_test(a))
-    return 0
-
-
-def _self_test(a) -> str:
-    """Prove the hooks are cheap so nobody has to read this file or fire them by hand."""
+def _self_test(a, keys) -> str:
+    """Prove each installed hook is fast, silent and speaks its agent's format, without sweeping."""
     base = [sys.executable, os.path.abspath(__file__)]
     for flag, val in (("--home", a.home), ("--tmp", a.tmp), ("--user-tmp", a.user_tmp)):
         if val:
             base += [flag, val]
-    out = []
-    for ev in ("prompt", "stop"):
-        t0 = time.perf_counter()
-        p = subprocess.run(base + ["hook", ev, "--self-test"], input='{"session_id":"self-test"}',
-                           capture_output=True, text=True, timeout=30)
-        ms = (time.perf_counter() - t0) * 1000
-        note = " (disk is low now, so it warned)" if ev == "prompt" and p.stdout else ""
-        out.append(f"{ev} hook {ms:.0f} ms, {len(p.stdout)} bytes output{note}")
-    return ("self-test: " + "; ".join(out) +
-            " (prompt prints only when disk is low; stop/session-end sweep detached, max every 3h; "
-            "self-test starts no sweep)")
+    worst, bad, n, warned = 0.0, [], 0, False
+    for key in keys:
+        for ev in sorted(set(agents.BY_KEY[key].events.values()) & {"prompt", "stop"}):
+            t0 = time.perf_counter()
+            p = subprocess.run(base + ["hook", ev, "--agent", key, "--self-test"],
+                               input='{"session_id":"self-test"}', capture_output=True, text=True, timeout=30)
+            worst, n = max(worst, (time.perf_counter() - t0) * 1000), n + 1
+            if ev in JSON_OUT.get(key, ()):
+                try:
+                    json.loads(p.stdout)
+                except ValueError:
+                    bad.append(f"{key}:{ev}")
+            warned |= ev == "prompt" and "disk low" in p.stdout
+    fmt = f"bad output: {', '.join(bad)}" if bad else "output format ok"
+    low = "; disk is low now, so the prompt check warned" if warned else ""
+    return f"self-test: {n} hooks, slowest {worst:.0f} ms, {fmt}{low}; no sweep started"
+
+
+def cmd_install(ctx, a):
+    script = Path(os.path.abspath(__file__))
+    canonical = script.parent.parent
+    if a.settings:                       # explicit Claude settings file (custom setups, tests)
+        targets = [agents.BY_KEY["claude"]]
+    else:
+        targets = agents.pick(ctx.home, a.agents)
+    if not targets:
+        print("no supported agent found; use --agents NAME or --schedule")
+    if a.dry_run:
+        print(f"dry run for home {ctx.home}: nothing written")
+        for ag in targets:
+            files = [str(ctx.home / (ag.skills or ".agents/skills") / "storage-steward")]
+            if ag.config:
+                files.append(str(Path(a.settings) if a.settings else ctx.home / ag.config))
+            print(f"  {ag.name}: would link/update " + " and hooks in ".join(files))
+        if a.schedule:
+            print("  scheduler: would add an OS timer (every 3h)")
+        return 0
+    lines = []
+    for ag in targets:
+        parts = [] if a.settings else [agents.link_skill(ag, ctx.home, canonical)]
+        if ag.config:
+            path = agents.write_hooks(ag, ctx.home, script, a.retention, Path(a.settings) if a.settings else None)
+            parts.append(f"hooks in {path}")
+        else:
+            parts.append("no hook API, covered by --schedule")
+        lines.append(f"  {ag.name}: " + "; ".join(parts))
+    if a.schedule:
+        lines.append("  scheduler: " + agents.schedule(ctx.home, script, "install"))
+    print(f"installed for {len(targets)} agent(s); backups saved; re-run safe")
+    print("\n".join(lines))
+    hooked = [t.key for t in targets if t.config]
+    if hooked:
+        print(_self_test(a, hooked))
+    return 0
 
 
 def cmd_uninstall(ctx, a):
-    path = _settings_path(a)
-    if not path.exists():
-        print("nothing to uninstall")
-        return 0
-    _write_settings(path, _strip(json.loads(path.read_text())))
-    print(f"removed storage-steward hooks from {path}")
+    targets = [agents.BY_KEY["claude"]] if a.settings else [t for t in agents.AGENTS if t.config]
+    done = [str(p) for t in targets
+            if (p := agents.remove_hooks(t, ctx.home, Path(a.settings) if a.settings else None))]
+    if not a.settings:
+        agents.schedule(ctx.home, Path(os.path.abspath(__file__)), "uninstall")
+    print(f"removed storage-steward hooks from {', '.join(done) or 'nothing'}; the skill files stay")
+    return 0
+
+
+def cmd_schedule(ctx, a):
+    print(agents.schedule(ctx.home, Path(os.path.abspath(__file__)), a.action, a.dry_run))
     return 0
 
 
@@ -583,18 +591,25 @@ def main(argv=None):
             s.add_argument("--dry-run", action="store_true")
     sub.add_parser("report")
     s = sub.add_parser("hook"); s.add_argument("event", choices=("prompt", "stop", "session-end"))
+    s.add_argument("--agent", default="claude", choices=[x.key for x in agents.AGENTS] + ["scheduler"])
     s.add_argument("--foreground", action="store_true")
     s.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
     for name in ("install", "uninstall"):
-        s = sub.add_parser(name); s.add_argument("--settings")
+        s = sub.add_parser(name)
+        s.add_argument("--settings", help="explicit Claude Code settings.json (Claude only)")
         if name == "install":
-            s.add_argument("--retention", type=int, help="also set cleanupPeriodDays if unset")
+            s.add_argument("--agents", default="auto", help="auto (detected), all, or e.g. claude,codex,cursor,gemini")
+            s.add_argument("--schedule", action="store_true", help="also add an OS timer (covers any agent)")
+            s.add_argument("--retention", type=int, help="also set Claude Code cleanupPeriodDays if unset")
+            s.add_argument("--dry-run", action="store_true", help="list what would change; write nothing")
+    s = sub.add_parser("schedule"); s.add_argument("action", choices=("install", "uninstall", "status"))
+    s.add_argument("--dry-run", action="store_true")
     a = p.parse_args(argv)
     if getattr(a, "only", None):
         a.only = [x for o in a.only for x in o.split(",")]
     ctx = Ctx(a)
-    return {"status": cmd_status, "scan": cmd_scan, "sweep": cmd_sweep, "report": cmd_report,
-            "hook": cmd_hook, "install": cmd_install, "uninstall": cmd_uninstall}[a.cmd](ctx, a)
+    return {"status": cmd_status, "scan": cmd_scan, "sweep": cmd_sweep, "report": cmd_report, "hook": cmd_hook,
+            "install": cmd_install, "uninstall": cmd_uninstall, "schedule": cmd_schedule}[a.cmd](ctx, a)
 
 
 if __name__ == "__main__":

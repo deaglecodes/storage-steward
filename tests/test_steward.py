@@ -232,3 +232,74 @@ class InstallTests(Sandbox):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MultiAgentTests(Sandbox):
+    def _seed(self):
+        (self.home / ".codex").mkdir()
+        (self.home / ".claude").mkdir()
+        (self.home / ".cursor").mkdir()
+        (self.home / ".cursor/hooks.json").write_text(json.dumps(
+            {"version": 1, "hooks": {"stop": [{"command": "notify-me"}]}}))
+        (self.home / ".gemini").mkdir()
+        (self.home / ".gemini/settings.json").write_text(json.dumps(
+            {"theme": "x", "hooks": {"SessionStart": [{"type": "command", "command": "hello"}]}}))
+
+    def test_install_all_agents_merges_and_uninstalls_cleanly(self):
+        self._seed()
+        for _ in range(2):
+            code, out = self.run_cli("install", "--agents", "auto")
+        self.assertEqual(code, 0)
+        self.assertIn("output format ok", out)
+        codex = json.loads((self.home / ".codex/hooks.json").read_text())
+        self.assertEqual(sorted(codex["hooks"]), ["Stop", "UserPromptSubmit"])
+        self.assertEqual(len(codex["hooks"]["Stop"]), 1, "idempotent")
+        cursor = json.loads((self.home / ".cursor/hooks.json").read_text())
+        self.assertEqual(cursor["version"], 1)
+        self.assertEqual([h["command"] for h in cursor["hooks"]["stop"]][0], "notify-me", "user hook kept")
+        self.assertIn("sessionEnd", cursor["hooks"])
+        self.assertNotIn("beforeSubmitPrompt", cursor["hooks"], "Cursor prompt hooks can't add context")
+        gem = json.loads((self.home / ".gemini/settings.json").read_text())
+        self.assertEqual(gem["theme"], "x")
+        self.assertIn("BeforeAgent", gem["hooks"])
+        self.assertEqual(gem["hooks"]["SessionStart"][0]["command"], "hello")
+        # skill visible to every agent from one real copy
+        self.assertTrue((self.home / ".agents/skills/storage-steward").is_symlink())
+        self.assertTrue((self.home / ".claude/skills/storage-steward/SKILL.md").exists())
+        self.run_cli("uninstall")
+        self.assertEqual(json.loads((self.home / ".cursor/hooks.json").read_text())["hooks"],
+                         {"stop": [{"command": "notify-me"}]})
+        self.assertNotIn("hooks", json.loads((self.home / ".codex/hooks.json").read_text()))
+        gem = json.loads((self.home / ".gemini/settings.json").read_text())
+        self.assertEqual(list(gem["hooks"]), ["SessionStart"])
+
+    def test_hook_output_matches_each_agent_protocol(self):
+        expect = {("codex", "stop"): {}, ("cursor", "stop"): {}, ("cursor", "session-end"): {},
+                  ("gemini", "stop"): {}, ("gemini", "prompt"): {}}
+        for (agent, ev), want in expect.items():
+            _, out = self.run_cli("hook", ev, "--agent", agent, "--self-test")
+            self.assertEqual(json.loads(out), want, f"{agent} {ev}")
+        _, out = self.run_cli("hook", "stop", "--agent", "claude", "--self-test")
+        self.assertEqual(out, "", "Claude stop hook stays silent")
+        old = steward.LOW_FREE_BYTES
+        steward.LOW_FREE_BYTES = 1 << 60
+        try:
+            _, out = self.run_cli("hook", "prompt", "--agent", "gemini", "--self-test")
+            self.assertIn("disk low", json.loads(out)["hookSpecificOutput"]["additionalContext"])
+            _, out = self.run_cli("hook", "prompt", "--agent", "codex", "--self-test")
+            self.assertTrue(out.startswith("[storage-steward] disk low"), "Codex takes plain-text context")
+        finally:
+            steward.LOW_FREE_BYTES = old
+
+    def test_existing_foreign_skill_dir_is_not_replaced(self):
+        (self.home / ".claude/skills/storage-steward").mkdir(parents=True)
+        (self.home / ".claude/skills/storage-steward/SKILL.md").write_text("---\nname: something-else\n---\n")
+        _, out = self.run_cli("install", "--agents", "claude")
+        self.assertIn("skipped", out)
+        self.assertIn("something-else", (self.home / ".claude/skills/storage-steward/SKILL.md").read_text())
+
+    def test_schedule_dry_run_writes_nothing(self):
+        _, out = self.run_cli("schedule", "install", "--dry-run")
+        self.assertTrue("StartInterval" in out or "OnUnitActiveSec" in out)
+        self.assertFalse((self.home / "Library/LaunchAgents").exists())
+        self.assertFalse((self.home / ".config/systemd").exists())

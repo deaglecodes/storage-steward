@@ -173,6 +173,16 @@ def codex_tmp(ctx):
     yield from idle_items(ctx, ctx.home / ".codex/.tmp", 3 * DAY)
 
 
+def opencode_snapshots(ctx):
+    for base in (ctx.home / ".local/share/opencode", ctx.home / "Library/Application Support/opencode"):
+        yield from idle_items(ctx, base / "snapshot", 30 * DAY)
+        yield from idle_items(ctx, base / "log", 7 * DAY)
+
+
+def cursor_hooks_logs(ctx):
+    yield from idle_items(ctx, ctx.home / ".cursor/logs", 14 * DAY)
+
+
 # ---------------------------------------------------------------- confirm tier
 
 def _git_clean(wt: Path) -> bool:
@@ -216,6 +226,21 @@ def codex_sessions(ctx):
         if ctx.now - newest > 30 * DAY:
             yield Item(str(f), size, str(root))
     yield from idle_items(ctx, ctx.home / ".codex/archived_sessions", 30 * DAY)
+
+
+def gemini_history(ctx):
+    yield from idle_items(ctx, ctx.home / ".gemini/tmp", 30 * DAY)
+    yield from idle_items(ctx, ctx.home / ".gemini/history", 30 * DAY)
+
+
+def copilot_sessions(ctx):
+    yield from idle_items(ctx, ctx.home / ".copilot/session-state", 30 * DAY)
+
+
+def cursor_workspaces(ctx):
+    for base in (ctx.home / "Library/Application Support/Cursor/User/workspaceStorage",
+                 ctx.home / ".config/Cursor/User/workspaceStorage"):
+        yield from idle_items(ctx, base, 60 * DAY)
 
 
 def _project_activity(proj: Path) -> float:
@@ -330,6 +355,8 @@ RULES: List[Rule] = [
     Rule("claude-file-history", "auto", "rewind snapshots >30d", claude_file_history),
     Rule("claude-shell-snapshots", "auto", "shell snapshots >7d", claude_shell_snapshots),
     Rule("codex-tmp", "auto", "Codex temp leftovers", codex_tmp),
+    Rule("opencode-snapshots", "auto", "OpenCode undo snapshots >30d, logs >7d", opencode_snapshots),
+    Rule("cursor-logs", "auto", "Cursor agent logs >14d", cursor_hooks_logs),
     Rule("npx-cache", "auto", "npx packages unused >14d", npx_cache, second_chance=True),
     Rule("uv-cache", "auto", "uv cache", uv_cache, second_chance=True),
     Rule("pnpm-store", "auto", "pnpm store", pnpm_store),
@@ -341,6 +368,9 @@ RULES: List[Rule] = [
     Rule("agent-worktrees", "confirm", "clean agent worktrees idle >7d", agent_worktrees),
     Rule("claude-transcripts", "confirm", "Claude transcripts >30d", claude_transcripts),
     Rule("codex-sessions", "confirm", "Codex sessions >30d", codex_sessions),
+    Rule("gemini-history", "confirm", "Gemini CLI chats/checkpoints >30d", gemini_history),
+    Rule("copilot-sessions", "confirm", "Copilot CLI sessions >30d", copilot_sessions),
+    Rule("cursor-workspaces", "confirm", "Cursor workspace storage >60d", cursor_workspaces),
     Rule("stale-project-deps", "confirm", "deps of projects idle >30d", stale_project_deps),
     Rule("playwright-old", "confirm", "old Playwright browsers", playwright_old),
     Rule("desktop-sandboxes-empty", "confirm", "empty desktop sandboxes >7d", desktop_sandboxes_empty),

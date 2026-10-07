@@ -1,5 +1,8 @@
 # What each rule touches, and why it's safe
 
+Rules are agent-agnostic. They cover Claude Code, the Claude desktop app, Codex, Cursor, Gemini CLI,
+OpenCode and Copilot CLI, plus the dev-tool caches every agent fills.
+
 Read this only when the user asks why something is or isn't deleted. The thresholds are deliberately
 conservative: "idle" means nothing in the subtree was modified for that long.
 
@@ -14,6 +17,8 @@ conservative: "idle" means nothing in the subtree was modified for that long.
 | claude-file-history | `~/.claude/file-history/<session>` | idle >30d | `/rewind` snapshots; reported up to 300 GB. A month-old session is past any realistic rewind. |
 | claude-shell-snapshots | `~/.claude/shell-snapshots/*` | idle >7d | Shell env captures, recreated per session. |
 | codex-tmp | `~/.codex/..codex-*.tmp-*`, `~/.codex/.tmp/*` | idle >3d | Leftovers from atomic writes. |
+| opencode-snapshots | `~/.local/share/opencode/snapshot/*`, `…/log/*` | idle >30d (logs >7d) | OpenCode undo snapshots, the equivalent of Claude's file-history. |
+| cursor-logs | `~/.cursor/logs/*` | idle >14d | Agent logs. |
 | npx-cache | `~/.npm/_npx/<hash>` | idle >14d, then second chance | Re-fetched by the next `npx`. Second chance keeps anything still being read. |
 | uv-cache | `~/.cache/uv` | `uv cache prune` (native) | Removes only unreachable objects. |
 | pnpm-store | `~/Library/pnpm/store` | `pnpm store prune` (native) | Removes only unreferenced packages. |
@@ -30,6 +35,9 @@ conservative: "idle" means nothing in the subtree was modified for that long.
 | agent-worktrees | `~/.claude/worktrees`, `~/.codex/worktrees`, `~/.cursor/worktrees`, `<cwd>/.claude/worktrees`, `<cwd>/.worktrees` | idle >7d and `git status --porcelain` empty | Commits live in the main repo, so removing a clean worktree loses nothing committed. Dirty ones are reported as "kept". Afterwards run `git worktree prune` in the main repo. |
 | claude-transcripts | `~/.claude/projects/*/*.jsonl` (+ sibling dir) | idle >30d | Session history used by `--resume`. Better long-term fix: `install --retention N` sets `cleanupPeriodDays`. |
 | codex-sessions | `~/.codex/sessions/YYYY/MM/DD/*.jsonl`, `~/.codex/archived_sessions` | idle >30d | Codex keeps these forever (openai/codex #42648, #40371). |
+| gemini-history | `~/.gemini/tmp/*`, `~/.gemini/history/*` | idle >30d | Gemini CLI chats and checkpoint shadow repos. |
+| copilot-sessions | `~/.copilot/session-state/*` | idle >30d | Copilot CLI session state. |
+| cursor-workspaces | `Cursor/User/workspaceStorage/*` | idle >60d | Per-workspace state, including chat history. |
 | stale-project-deps | `node_modules`, `.venv`, `venv`, `.next`, `.turbo`, `.nuxt`, `.svelte-kit`, `.parcel-cache`, Rust `target` | project idle >30d (git index/HEAD + manifests) | Reinstallable, but costs a reinstall. Never the current project. |
 | playwright-old | `~/Library/Caches/ms-playwright/<browser>-<rev>` | older revision, idle >30d | The newest revision of each browser is always kept. |
 | desktop-sandboxes-empty | whole `local_*` sandbox | idle >7d, `outputs/` and `uploads/` empty | Removes that Cowork task's transcript too, so ask first. |

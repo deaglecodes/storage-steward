@@ -10,6 +10,7 @@
   <img src="https://img.shields.io/badge/python-3.9%2B-0E1A2B" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/dependencies-none-17A673" alt="no dependencies">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-2F6FDE" alt="macOS | Linux">
+  <img src="https://img.shields.io/badge/agents-Claude%20Code%20%7C%20Codex%20%7C%20Cursor%20%7C%20Gemini%20CLI-0E1A2B" alt="agents">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-586579" alt="MIT"></a>
 </p>
 
@@ -17,9 +18,20 @@
 
 ---
 
-**storage-steward** is a [Claude Code](https://claude.com/claude-code) skill that cleans up after coding agents
-while they work. It runs from background hooks, so it costs zero tokens per prompt, and it never deletes
-anything you'd miss. You stop having to clear disk space every morning.
+**storage-steward** is an [Agent Skill](https://agentskills.io) that cleans up after coding agents while they
+work. It works with Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Copilot CLI, or anything else that
+reads `SKILL.md`. It runs from background hooks (or an OS timer), so it costs zero tokens per prompt, and it
+never deletes anything you'd miss. You stop having to clear disk space every morning.
+
+| Agent | Skill location | Automatic cleanup |
+|---|---|---|
+| Claude Code | `~/.claude/skills` (symlink) | hooks: `UserPromptSubmit`, `Stop`, `SessionEnd` |
+| Codex | `~/.agents/skills` | hooks: `UserPromptSubmit`, `Stop` |
+| Cursor | `~/.cursor/skills` (symlink) | hooks: `stop`, `sessionEnd` |
+| Gemini CLI / Antigravity | `~/.gemini/skills` (symlink) | hooks: `BeforeAgent`, `AfterAgent`, `SessionEnd` |
+| OpenCode, Copilot CLI, Aider, others | `~/.agents/skills` or a symlink | `--schedule`: launchd / systemd / cron, every 3 h |
+
+There is only one real copy on disk; every other agent gets a symlink, as you'd expect from a storage tool.
 
 ### Why
 
@@ -74,35 +86,44 @@ every check; runs without passed 96%. The full method and caveats are in the
 
 ## Install
 
-You need Python 3.9 or newer and Claude Code. There are no other dependencies.
+You need Python 3.9 or newer and at least one coding agent. There are no other dependencies.
 
 ```bash
 git clone https://github.com/deaglecodes/storage-steward
 ```
 
 ```bash
+./storage-steward/install.sh --dry-run
+```
+
+```bash
 ./storage-steward/install.sh --retention 21
 ```
 
-The script copies the skill to `~/.claude/skills/storage-steward`, backs up `~/.claude/settings.json`, adds
-three hooks, and tests them. The test does not start a sweep. `--retention` is optional: it sets Claude
-Code's built-in transcript retention (`cleanupPeriodDays`, 30 days by default).
+The installer finds the agents on your machine and puts one copy of the skill in `~/.agents/skills`, with
+symlinks for the others. It backs up each agent's config, adds that agent's hooks, and checks that every
+hook answers in the format its agent expects. The check does not start a sweep. `--dry-run` lists what would
+change. Other options:
+
+- `--agents claude,codex` limits the install to the agents you name.
+- `--schedule` adds an OS timer for agents without hooks.
+- `--retention` sets Claude Code's built-in transcript retention (`cleanupPeriodDays`).
 
 To see what it would reclaim right now, run a dry run. It changes nothing:
 
 ```bash
-python3 ~/.claude/skills/storage-steward/scripts/steward.py scan
+python3 ~/.agents/skills/storage-steward/scripts/steward.py scan
 ```
 
-You can also just ask Claude *"why is my disk full?"*; the skill is picked up from that.
+You can also just ask your agent *"why is my disk full?"*; the skill is picked up from that.
 
 ## How it works
 
 | When | What happens | Cost |
 |---|---|---|
 | **While the agent works** | The skill gives agents five habits: one scratch folder per task; no background output allowed to grow without limit; APFS `cp -c` clones of `node_modules` for worktrees; a free-space check before writes over 1 GB; streaming instead of saving large intermediate files. | about 1.8k tokens, only when the skill loads |
-| **Every prompt** | A `UserPromptSubmit` hook checks free space. It prints a warning only below max(20 GiB, 5%). | 0 tokens, about 60 ms |
-| **After a session** | `Stop` and `SessionEnd` hooks start a sweep of the **auto** tier in the background, at most every 3 hours (immediately when disk is low). | 0 tokens, the agent never waits |
+| **Every prompt** | A prompt hook (`UserPromptSubmit`, or `BeforeAgent` in Gemini) checks free space. It adds a warning only below max(20 GiB, 5%). Otherwise it prints nothing, or `{}` where the agent requires JSON. | 0 tokens, about 60 ms |
+| **After a session** | Stop/end hooks start a sweep of the **auto** tier in the background, at most every 3 hours (immediately when disk is low). Agents without hooks get the same sweep from an OS timer. | 0 tokens, the agent never waits |
 | **When it matters** | Items in the **confirm** tier are listed with their sizes. Only the ones you approve are removed (`--only rule`). | your call |
 
 **Tiers**
@@ -133,14 +154,15 @@ steward.py scan                   dry run, grouped by tier (~15 lines max)
 steward.py sweep                  reclaim the auto tier
 steward.py sweep --tier confirm --only RULE[,RULE] --yes
 steward.py report                 total reclaimed so far
-steward.py install [--retention N] / uninstall
+steward.py install [--agents LIST] [--schedule] [--dry-run] / uninstall
+steward.py schedule install|uninstall|status
 ```
 
 Each command prints at most about 15 lines, so an agent never has to read thousands of lines of `du` output.
 
 ## Safety
 
-These rules are enforced in code and covered by 13 unit tests. storage-steward never:
+These rules are enforced in code and covered by 17 unit tests. storage-steward never:
 
 - empties your Trash (that's a permanent delete you should make yourself)
 - touches `Documents`, `Desktop`, `Downloads`, credentials, `settings.json`, memory or skills
@@ -153,10 +175,12 @@ These rules are enforced in code and covered by 13 unit tests. storage-steward n
 
 ## FAQ
 
-<details><summary><b>Does it work with Codex, Cursor or cron?</b></summary>
+<details><summary><b>Which agents does it work with?</b></summary>
 
-The script doesn't depend on any one agent. It already cleans Codex and Cursor worktrees and Codex temp
-files, and any scheduler can run `steward.py sweep`. Only the hooks are specific to Claude Code.
+Any agent that reads `SKILL.md` can use the skill. The installer adds hooks for Claude Code, Codex, Cursor
+and Gemini CLI/Antigravity, each in that agent's own format, and `--schedule` covers everything else. The
+cleanup rules include Claude, Codex, Cursor, Gemini, OpenCode and Copilot leftovers, plus the dev caches
+they all fill.
 </details>
 
 <details><summary><b>Will it delete my transcripts?</b></summary>
@@ -167,8 +191,9 @@ Not on its own. Transcripts older than 30 days are a confirm-tier item. `--reten
 
 <details><summary><b>How do I uninstall it?</b></summary>
 
-Run `python3 ~/.claude/skills/storage-steward/scripts/steward.py uninstall`. It removes only its own hooks.
-Each install also saves a backup next to your `settings.json`.
+Run `python3 ~/.agents/skills/storage-steward/scripts/steward.py uninstall`. It removes only its own hooks
+from every agent, plus the OS timer if you added one. Each install also saves a backup next to every config
+file it edits.
 </details>
 
 ## Reproduce the benchmarks

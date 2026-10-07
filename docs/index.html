@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>storage-steward · keeps agents from filling your disk</title>
-<meta name="description" content="A Claude Code skill that cleans up agent leftovers as you work: zero tokens per prompt, no lost files, caches you still use are kept. 79–85% less disk use over 60 days in benchmarks.">
+<meta name="description" content="An agent skill for Claude Code, Codex, Cursor and Gemini CLI that cleans up agent leftovers as you work: zero tokens per prompt, no lost files, caches you still use are kept. 79–85% less disk use over 60 days in benchmarks.">
 <meta property="og:title" content="storage-steward">
 <meta property="og:description" content="Your agents leave files behind. This cleans up as they work.">
 <meta property="og:image" content="https://deaglecodes.github.io/storage-steward/assets/og.png">
@@ -81,6 +81,9 @@ section { padding-block: var(--section) 0; }
 .btn:hover { transform: translateY(-1px); border-color: var(--accent); }
 .proof { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 0.9rem; color: var(--muted); }
 .proof b { color: var(--ink); font-family: var(--f-display); font-size: 1.05rem; }
+.works { display: grid; gap: 10px; }
+.chipset { display: flex; flex-wrap: wrap; gap: 6px; }
+.chipset i { font: 500 0.8rem var(--f-body); font-style: normal; color: var(--ink-2); background: var(--surface); border: 1px solid var(--rule); border-radius: 999px; padding: 4px 10px; }
 
 /* df panel */
 .panel { grid-template-columns: minmax(0, 1fr); background: var(--term); color: var(--term-fg); border-radius: 18px; padding: 18px 20px 20px; box-shadow: 0 30px 60px -30px rgb(14 26 43 / 0.55), 0 0 0 1px var(--term-rule); display: grid; gap: 16px; min-width: 0; font-family: var(--f-mono); }
@@ -224,12 +227,13 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
   <section class="hero" aria-labelledby="hero-h">
     <div class="wrap">
       <div class="hero-copy">
-        <div class="eyebrow">Claude Code skill · MIT · macOS + Linux · zero dependencies</div>
+        <div class="eyebrow">Agent skill · MIT · macOS + Linux · zero dependencies</div>
         <h1 id="hero-h">Your agents leave files behind. This <em>cleans up</em> as they work.</h1>
         <p class="lede">storage-steward stops the daily "my Mac is full" cleanup. Background hooks sweep agent leftovers for zero tokens. Caches you still use stay put, and anything that could be yours waits for your OK.</p>
         <div class="cmd"><code id="cmd-1">git clone https://github.com/deaglecodes/storage-steward &amp;&amp; ./storage-steward/install.sh</code><button class="copy" data-copy="cmd-1">Copy</button></div>
         <div class="ctas"><a class="btn primary" href="#install">Install in 30 seconds</a><a class="btn" href="benchmarks.html">Read the benchmarks</a></div>
         <div class="proof"><span><b>79–85%</b> less disk used</span><span><b>0</b> files lost</span><span><b>0</b> tokens per prompt</span></div>
+        <div class="works"><span class="eyebrow">Works with</span><span class="chipset"><i>Claude Code</i><i>Codex</i><i>Cursor</i><i>Gemini CLI</i><i>OpenCode</i><i>Copilot CLI</i><i>any SKILL.md agent</i></span></div>
       </div>
       <div class="panel" aria-label="Simulated disk usage replay">
         <div class="panel-top"><i></i><i></i><i></i><span>df -h  ·  1 TB drive  ·  heavy agent user, simulated</span></div>
@@ -273,7 +277,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
         <div class="layer"><div class="when">While the agent works</div><h3>Don't make the mess</h3>
           <ul><li>One scratch folder per task, deleted at the end</li><li>No background output allowed to grow without limit</li><li>Worktree dependencies cloned with APFS <code>cp -c</code> instead of a fresh install</li><li>Free space checked before writing more than 1 GB</li></ul></div>
         <div class="layer"><div class="when">After every session</div><h3>Hooks sweep for free</h3>
-          <p>A <code>Stop</code>/<code>SessionEnd</code> hook starts a sweep in the background, at most every 3 hours. The prompt check costs 61 ms and prints nothing unless free space drops below max(20 GiB, 5%).</p></div>
+          <p>Each agent gets hooks in its own format. Claude Code, Codex, Cursor and Gemini CLI start a sweep in the background, at most every 3 hours. Agents without hooks get an OS timer. The prompt check costs 61 ms and prints nothing unless free space drops below max(20 GiB, 5%).</p></div>
         <div class="layer"><div class="when">When it needs you</div><h3>Ask before it matters</h3>
           <p>History, old projects and clean worktrees are listed with their sizes. Only the ones you approve are removed, with <code>--only rule</code>.</p></div>
       </div>
@@ -331,7 +335,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
   <section aria-labelledby="safe-h">
     <div class="wrap">
       <div class="sec-head"><div class="eyebrow">Safety</div><h2 id="safe-h">What it will never do</h2>
-        <p class="lede">These rules are enforced in code, and 13 unit tests cover the guards.</p></div>
+        <p class="lede">These rules are enforced in code, and 17 unit tests cover the guards.</p></div>
       <ul class="never" id="never"></ul>
     </div>
   </section>
@@ -339,15 +343,15 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
   <section id="install" aria-labelledby="install-h">
     <div class="wrap">
       <div class="sec-head"><div class="eyebrow">Install</div><h2 id="install-h">Thirty seconds, then forget about it</h2>
-        <p class="lede">You need Python 3.9 or newer and Claude Code. There's nothing else to install.</p></div>
+        <p class="lede">You need Python 3.9 or newer and any coding agent. There's nothing else to install.</p></div>
       <div class="steps">
         <div class="step"><div><h3>Get the code</h3><div class="cmd"><code id="cmd-2">git clone https://github.com/deaglecodes/storage-steward</code><button class="copy" data-copy="cmd-2">Copy</button></div></div></div>
         <div class="step"><div><h3>Install the skill and hooks</h3>
           <div class="cmd"><code id="cmd-3">./storage-steward/install.sh --retention 21</code><button class="copy" data-copy="cmd-3">Copy</button></div>
-          <p>This copies the skill to <code>~/.claude/skills</code>, backs up <code>settings.json</code>, adds three hooks and tests them. <code>--retention</code> is optional; it sets Claude Code's own transcript retention.</p></div></div>
+          <p>This finds your agents and puts one copy of the skill in <code>~/.agents/skills</code>, with symlinks for the others. It backs up each agent's config, adds that agent's hooks and tests them. Add <code>--dry-run</code> to preview, or <code>--schedule</code> for agents without hooks.</p></div></div>
         <div class="step"><div><h3>See what it can reclaim now</h3>
-          <div class="cmd"><code id="cmd-4">python3 ~/.claude/skills/storage-steward/scripts/steward.py scan</code><button class="copy" data-copy="cmd-4">Copy</button></div>
-          <p>This is a dry run and changes nothing. You can also just ask Claude "why is my disk full?" and the skill handles it.</p></div></div>
+          <div class="cmd"><code id="cmd-4">python3 ~/.agents/skills/storage-steward/scripts/steward.py scan</code><button class="copy" data-copy="cmd-4">Copy</button></div>
+          <p>This is a dry run and changes nothing. You can also just ask your agent "why is my disk full?" and the skill handles it.</p></div></div>
       </div>
     </div>
   </section>
@@ -357,7 +361,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
       <div class="sec-head"><div class="eyebrow">FAQ</div><h2 id="faq-h">Questions</h2></div>
       <div class="faq">
         <details><summary>Will it slow down my prompts?</summary><p>No. The prompt hook takes about 61 ms (mostly Python startup) and prints nothing unless free space is low. The cleanup itself runs in a separate background process after a session stops.</p></details>
-        <details><summary>Does it work with Codex, Cursor, or plain cron?</summary><p>The script doesn't depend on any one agent. It already cleans Codex and Cursor worktrees and Codex session temp files. Any tool or scheduler can call <code>steward.py sweep</code>. The hooks are specific to Claude Code.</p></details>
+        <details><summary>Which agents does it work with?</summary><p>Any agent that reads <code>SKILL.md</code>. The installer adds native hooks for Claude Code (<code>Stop</code>, <code>SessionEnd</code>), Codex (<code>Stop</code>), Cursor (<code>stop</code>, <code>sessionEnd</code>) and Gemini CLI (<code>AfterAgent</code>, <code>SessionEnd</code>), each in that agent's output format. <code>--schedule</code> adds a launchd, systemd or cron timer for OpenCode, Copilot CLI, Aider or anything else.</p></details>
         <details><summary>Will it delete my Claude transcripts?</summary><p>Not on its own. Transcripts older than 30 days are a confirm-tier item. <code>--retention 21</code> sets Claude Code's built-in <code>cleanupPeriodDays</code>, which is Claude Code's own deletion; leave it out to keep the 30-day default.</p></details>
         <details><summary>How do I see what it removed, or undo the install?</summary><p><code>steward.py report</code> shows the total reclaimed, from a local ledger. <code>steward.py uninstall</code> removes only its hooks, and a backup of your settings is saved on every install.</p></details>
         <details><summary>Does it run on Linux?</summary><p>Yes. Paths fall back to <code>/tmp</code>, <code>~/.cache</code> and so on. Second-chance eviction relies on <code>relatime</code>, the default on most Linux filesystems. On a <code>noatime</code> mount it detects that and never evicts caches on its own.</p></details>
