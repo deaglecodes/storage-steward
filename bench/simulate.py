@@ -29,6 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "storage-steward" / "scripts"))
+import rules  # noqa: E402
 import steward  # noqa: E402
 
 SCALE = 4096
@@ -266,7 +267,7 @@ class World:
 
 
 def run(policy: str, days: int, seed: int, persona: dict, workdir: Path):
-    saved = [(r, r.second_chance) for r in steward.RULES]
+    saved = [(r, r.second_chance) for r in rules.RULES]
     if policy == "steward-age-only":           # ablation: same rules, no second-chance eviction
         for r, _ in saved:
             r.second_chance = False
