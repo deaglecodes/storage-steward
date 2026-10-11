@@ -131,6 +131,7 @@ a { color: inherit; }
 .steps .n { font: 12px/1 var(--f-mono); color: var(--accent); }
 .steps h2 { font-size: clamp(36px, 4.4vw, 56px); margin: 18px 0 14px; }
 .steps p { margin: 0; color: var(--muted); max-width: 21em; }
+.steps code { font: 0.86em var(--f-mono); color: var(--ink); }
 
 /* rules */
 .rules h2 { font-size: clamp(52px, 8.4vw, 112px); margin: 0 0 clamp(30px, 4vw, 46px); }
@@ -194,7 +195,7 @@ a { color: inherit; }
     <div class="wrap hero-in">
       <h1 class="d less" id="hero-h"><span class="sr">storage-steward: </span>Less<span class="dot">.</span></h1>
       <p class="lede">Your coding agents leave gigabytes behind. <b>storage-steward</b> sweeps them while you work.</p>
-      <div class="cmd"><code id="cmd">git clone https://github.com/deaglecodes/storage-steward &amp;&amp; ./storage-steward/install.sh</code><button class="copy" type="button" data-copy="cmd">Copy</button></div>
+      <div class="cmd"><code id="cmd">git clone https://github.com/deaglecodes/storage-steward &amp;&amp; cd storage-steward &amp;&amp; ./install.sh</code><button class="copy" type="button" data-copy="cmd">Copy</button></div>
       <p class="works">Claude Code · Codex · Cursor · Gemini CLI · any SKILL.md agent</p>
     </div>
     <div class="wrap status">
@@ -225,7 +226,7 @@ a { color: inherit; }
   <section class="blk wrap" id="how" aria-labelledby="how-h">
     <p class="tag" id="how-h">how</p>
     <ol class="steps">
-      <li data-reveal><span class="n">01</span><h2 class="d">Install once.</h2><p>One command finds your agents and adds the hooks.</p></li>
+      <li data-reveal><span class="n">01</span><h2 class="d">Install once.</h2><p>One command finds your agents and adds the hooks. Add <code>--dry-run</code> to preview it first.</p></li>
       <li data-reveal style="--rd: 0.08s"><span class="n">02</span><h2 class="d">Forget it.</h2><p>When a session ends, old leftovers are swept in the background. 0 tokens per prompt.</p></li>
       <li data-reveal style="--rd: 0.16s"><span class="n">03</span><h2 class="d">Keep yours.</h2><p>Caches you use stay. Anything that might be yours waits for your OK.</p></li>
     </ol>
