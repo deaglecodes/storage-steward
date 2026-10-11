@@ -567,53 +567,67 @@ def _self_test(a, keys) -> str:
 def cmd_install(ctx, a):
     script = Path(os.path.abspath(__file__))
     canonical = script.parent.parent
-    if a.settings:                       # explicit Claude settings file (custom setups, tests)
-        targets = [agents.BY_KEY["claude"]]
-    else:
-        targets = agents.pick(ctx.home, a.agents)
+    settings = Path(a.settings) if a.settings else None    # explicit Claude settings file (custom setups, tests)
+    targets = [agents.BY_KEY["claude"]] if settings else agents.pick(ctx.home, a.agents)
     if not targets:
         print("no supported agent found; use --agents NAME or --schedule")
+    record = agents.read_record(ctx.state)
+    owned = agents.owned_retention(record, settings or ctx.home / agents.BY_KEY["claude"].config)
     if a.dry_run:
         print(f"dry run for home {ctx.home}: nothing written")
-        for ag in targets:
-            files = [str(ctx.home / (ag.skills or ".agents/skills") / "storage-steward")]
-            if ag.config:
-                files.append(str(Path(a.settings) if a.settings else ctx.home / ag.config))
-            print(f"  {ag.name}: would link/update " + " and hooks in ".join(files))
+        print("\n".join(agents.plan(targets, ctx.home, settings, a.retention, owned)))
         if a.schedule:
             print("  scheduler: would add an OS timer (every 3h)")
         return 0
-    lines = []
+    lines, notes, hooked, skipped = [], [], [], 0
     for ag in targets:
-        parts = [] if a.settings else [agents.link_skill(ag, ctx.home, canonical)]
-        if ag.config:
-            path = agents.write_hooks(ag, ctx.home, script, a.retention, Path(a.settings) if a.settings else None)
-            parts.append(f"hooks in {path}")
+        try:                             # hooks first: a config we can't parse skips the whole agent
+            edit = agents.write_hooks(ag, ctx.home, script, a.retention, settings, owned) if ag.config else None
+        except agents.ConfigError as e:
+            lines.append(f"  {ag.name}: skipped: {e}")
+            skipped += 1
+            continue
+        parts = [] if settings else [agents.link_skill(ag, ctx.home, canonical)]
+        if edit:
+            hooked.append(ag.key)
+            parts.append(f"hooks in {edit.path}" + ("" if edit.changed else " (unchanged)"))
+            notes += [f"  {edit.note}"] if edit.note else []
+            if edit.retention is not None:
+                agents.remember_retention(ctx.state, record, edit.path, edit.retention)
         else:
             parts.append("no hook API, covered by --schedule")
         lines.append(f"  {ag.name}: " + "; ".join(parts))
     if a.schedule:
-        lines.append("  scheduler: " + agents.schedule(ctx.home, script, "install"))
-    print(f"installed for {len(targets)} agent(s); backups saved; re-run safe")
-    print("\n".join(lines))
-    hooked = [t.key for t in targets if t.config]
+        lines.append("  scheduler: " + agents.schedule(ctx.home, script, "install", real_home=ctx.real_home))
+    print(f"installed for {len(targets) - skipped} of {len(targets)} agent(s); "
+          "each edited file backed up next to it; re-run safe")
+    print("\n".join(lines + notes))
     if hooked:
         print(_self_test(a, hooked))
-    return 0
+    return 1 if skipped else 0
 
 
 def cmd_uninstall(ctx, a):
-    targets = [agents.BY_KEY["claude"]] if a.settings else [t for t in agents.AGENTS if t.config]
-    done = [str(p) for t in targets
-            if (p := agents.remove_hooks(t, ctx.home, Path(a.settings) if a.settings else None))]
-    if not a.settings:
-        agents.schedule(ctx.home, Path(os.path.abspath(__file__)), "uninstall")
-    print(f"removed storage-steward hooks from {', '.join(done) or 'nothing'}; the skill files stay")
-    return 0
+    script = Path(os.path.abspath(__file__))
+    if a.settings:                       # narrow: only our hooks in that one file
+        if a.purge:
+            print("--purge is ignored with --settings")
+        try:
+            edit = agents.remove_hooks(agents.BY_KEY["claude"], ctx.home, Path(a.settings))
+        except agents.ConfigError as e:
+            print(f"  Claude Code: skipped: {e}")
+            return 1
+        print(f"removed storage-steward hooks from {a.settings}" if edit and edit.hooks
+              else f"no storage-steward hooks in {a.settings}")
+        return 0
+    lines, code = agents.uninstall(ctx.home, ctx.state, policy.path_for(ctx.home, ctx.real_home), script,
+                                   ctx.real_home, a.purge)
+    print("\n".join(lines))
+    return code
 
 
 def cmd_schedule(ctx, a):
-    print(agents.schedule(ctx.home, Path(os.path.abspath(__file__)), a.action, a.dry_run))
+    print(agents.schedule(ctx.home, Path(os.path.abspath(__file__)), a.action, a.dry_run, real_home=ctx.real_home))
     return 0
 
 
@@ -646,8 +660,11 @@ def main(argv=None):
         if name == "install":
             s.add_argument("--agents", default="auto", help="auto (detected), all, or e.g. claude,codex,cursor,gemini")
             s.add_argument("--schedule", action="store_true", help="also add an OS timer (covers any agent)")
-            s.add_argument("--retention", type=int, help="also set Claude Code cleanupPeriodDays if unset")
+            s.add_argument("--retention", type=agents.retention_days, metavar="DAYS",
+                           help="also set Claude Code cleanupPeriodDays if unset (uninstall reverts it)")
             s.add_argument("--dry-run", action="store_true", help="list what would change; write nothing")
+        else:
+            s.add_argument("--purge", action="store_true", help="also remove your policy file and the state dir")
     s = sub.add_parser("schedule"); s.add_argument("action", choices=("install", "uninstall", "status"))
     s.add_argument("--dry-run", action="store_true")
     s = sub.add_parser("rules", help="show the effective policy"); s.add_argument("--json", action="store_true")

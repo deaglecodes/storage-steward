@@ -269,7 +269,7 @@ class MultiAgentTests(Sandbox):
         self.run_cli("uninstall")
         self.assertEqual(json.loads((self.home / ".cursor/hooks.json").read_text())["hooks"],
                          {"stop": [{"command": "notify-me"}]})
-        self.assertNotIn("hooks", json.loads((self.home / ".codex/hooks.json").read_text()))
+        self.assertFalse((self.home / ".codex/hooks.json").exists(), "held only our hooks, so removed")
         gem = json.loads((self.home / ".gemini/settings.json").read_text())
         self.assertEqual(list(gem["hooks"]), ["SessionStart"])
 
