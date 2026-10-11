@@ -59,20 +59,20 @@ real skill code:
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/chart-dark.svg">
-    <img src="assets/chart-light.svg" alt="Disk used over 60 days: no cleanup 297 GB, storage-steward 64 GB, with weekly approval 45 GB, manual daily wipe 36 GB" width="820">
+    <img src="assets/chart-light.svg" alt="Disk used over 60 days: no cleanup 294 GB, storage-steward 61 GB, with weekly approval 44 GB, manual daily wipe 33 GB" width="820">
   </picture>
 </p>
 
 | Approach | Disk used, day 60 | Saved | Cache re-downloads | Deliverables lost |
 |---|---:|---:|---:|---:|
-| No cleanup | 297 GB | — | 0 | 0 |
-| Manual daily wipe | 36 GB | 88% | 878 (41.8 GB) | **104 / 104** |
-| **storage-steward hooks** | 64 GB | **79%** | **1** | **0** |
-| **hooks + weekly OK** | 45 GB | **85%** | **1** | **0** |
+| No cleanup | 294 GB | — | 0 | 0 |
+| Manual daily wipe | 33 GB | 89% | 878 (41.8 GB) | **104 / 104** |
+| **storage-steward hooks** | 61 GB | **79%** | **1** | **0** |
+| **hooks + weekly OK** | 44 GB | **85%** | **1** | **0** |
 
 The daily wipe saves a little more space, but it re-downloads 42 GB of caches and deletes every file made in
-a Cowork session. With runaway task output (seen in the GitHub reports), no cleanup reaches **1,001 GB**,
-more than a 1 TB Mac holds, and storage-steward saves 94–96%.
+a Cowork session. With runaway task output (seen in the GitHub reports), no cleanup reaches **998 GB**, a full
+1 TB Mac, and storage-steward saves 94–96%.
 
 When an agent does the cleanup itself, the skill makes it cheaper. Each task ran in a disposable sandbox,
 twice with the skill and twice without:
@@ -88,36 +88,59 @@ every check; runs without passed 96%. The full method and caveats are in the
 
 ## Install
 
-You need Python 3.9 or newer and at least one coding agent. There are no other dependencies.
+You need Python 3.9 or newer (the `python3` that ships with macOS is fine) and at least one coding agent.
+There are no other dependencies.
 
 ```bash
-git clone https://github.com/deaglecodes/storage-steward
+git clone https://github.com/deaglecodes/storage-steward && cd storage-steward
 ```
 
-```bash
-./storage-steward/install.sh --dry-run
-```
+See what the installer would change. This writes nothing:
 
 ```bash
-./storage-steward/install.sh --retention 21
+./install.sh --dry-run
+```
+
+Then install:
+
+```bash
+./install.sh
 ```
 
 The installer finds the agents on your machine and puts one copy of the skill in `~/.agents/skills`, with
 symlinks for the others. It backs up each agent's config, adds that agent's hooks, and checks that every
-hook answers in the format its agent expects. The check does not start a sweep. `--dry-run` lists what would
-change. Other options:
+hook answers in the format its agent expects. The check does not start a sweep. To update, `git pull` and
+run `./install.sh` again; it replaces the old copy. Options:
 
 - `--agents claude,codex` limits the install to the agents you name.
 - `--schedule` adds an OS timer for agents without hooks.
-- `--retention` sets Claude Code's built-in transcript retention (`cleanupPeriodDays`).
+- `--retention 21` also sets Claude Code's own transcript retention (`cleanupPeriodDays`), so Claude Code
+  deletes transcripts older than 21 days instead of 30. It's off unless you ask, and uninstall reverts it.
 
-To see what it would reclaim right now, run a dry run. It changes nothing:
+Before you let it delete anything, see exactly what it would remove right now. Neither command changes
+anything:
 
 ```bash
 python3 ~/.agents/skills/storage-steward/scripts/steward.py scan
 ```
 
-You can also just ask your agent *"why is my disk full?"*; the skill is picked up from that.
+```bash
+python3 ~/.agents/skills/storage-steward/scripts/steward.py scan --paths
+```
+
+You can also just ask your agent *"why is my disk full?"*; the skill is picked up from that. In the rest of
+this README, `steward.py` is short for `python3 ~/.agents/skills/storage-steward/scripts/steward.py`.
+
+### Uninstall
+
+```bash
+python3 ~/.agents/skills/storage-steward/scripts/steward.py uninstall
+```
+
+This removes the hooks from every agent, the skill and its links, the OS timer if you added one, and the
+`--retention` setting if it set one. Your policy (`~/.config/storage-steward`) and the log of what was removed
+(`~/.cache/storage-steward`) stay; run `uninstall --purge` instead to remove them too (or, after an
+uninstall, `python3 storage-steward/scripts/steward.py uninstall --purge` from your clone).
 
 ## How it works
 
@@ -130,9 +153,11 @@ You can also just ask your agent *"why is my disk full?"*; the skill is picked u
 
 **Tiers**
 
-- **auto** (swept without asking): idle task output, plugin copies inside idle desktop sandboxes, debug logs
-  older than 7 days, rewind snapshots older than 30 days, stale npx/uv/pip caches, Xcode DerivedData,
-  updater leftovers, `$TMPDIR` entries older than 7 days.
+- **auto** (swept without asking): idle task output and session temp folders, plugin copies inside idle
+  desktop sandboxes, debug logs and shell snapshots older than 7 days, rewind snapshots older than 30 days,
+  Codex/OpenCode/Cursor temp files and logs, stale npx and pip caches, Xcode DerivedData, updater leftovers,
+  `$TMPDIR` entries older than 7 days (not ones holding a live socket), and the tools' own prune commands:
+  `brew cleanup --prune=14`, `uv cache prune`, `pnpm store prune`.
 - **confirm** (needs your OK): transcripts and Codex sessions older than 30 days, clean agent worktrees,
   `node_modules`/`.venv` of projects idle for 30+ days, old Playwright browsers, Docker build cache.
 - **info** (reported, never touched): local models, the Cowork VM image, Codex databases, your Cowork
@@ -181,40 +206,57 @@ The policy lives in `~/.config/storage-steward/config.json`:
 - `off`: ignored.
 
 **Guard rails:**
-- `keep` beats every rule.
-- Custom rules must name a folder below `~`.
-- Rules inside Documents, Desktop, Downloads, Pictures, Movies or Music are capped at `confirm`, so
-  automatic sweeps never reach your personal folders.
-- A broken config file falls back to the defaults instead of breaking a hook.
+- `keep` beats every rule. A path keeps everything under it; a name pattern like `*.mov` (any case) also
+  keeps any folder that contains a match.
+- Custom rules must name a folder below `~`, without `..`.
+- Nothing inside Documents, Desktop, Downloads, Pictures, Movies or Music is ever swept automatically,
+  whatever a rule's tier says. Rules there are capped at `confirm`.
+- A broken config file never breaks a hook. It pauses deletes until you fix it (`scan` says why), because
+  a keep list that can't be read can't protect anything. A typo in one rule switches that rule off.
 
 ## Commands
 
 ```text
 steward.py status                 one line: free space, flags LOW
-steward.py scan                   dry run, grouped by tier (~15 lines max)
+steward.py scan                   dry run, grouped by tier (~15 lines)
+steward.py scan --paths           dry run, every path a sweep would remove
 steward.py sweep                  reclaim the auto tier
 steward.py sweep --tier confirm --only RULE[,RULE] --yes
-steward.py report                 total reclaimed so far
-steward.py install [--agents LIST] [--schedule] [--dry-run] / uninstall
+steward.py report                 total reclaimed so far, and where the removal log is
+steward.py install [--agents LIST] [--schedule] [--retention DAYS] [--dry-run]
+steward.py uninstall [--purge]
 steward.py schedule install|uninstall|status
-steward.py rules [--json]                       the effective policy
+steward.py rules [--json]         the effective policy, one line per rule
 steward.py config set|unset|keep|unkeep|add|drop|show
+steward.py --version
 ```
 
-Each command prints at most about 15 lines, so an agent never has to read thousands of lines of `du` output.
+Output stays short (`status` is one line, `scan` about 15), so an agent never has to read thousands of lines
+of `du` output.
 
 ## Safety
 
-These rules are enforced in code and covered by 25 unit tests. storage-steward never:
+These rules are enforced in code, at the moment of each delete, whatever a rule or your config says.
+The unit tests in [`tests/`](tests) cover each one, including the ways reviewers found to get around them.
+storage-steward never:
 
 - empties your Trash (that's a permanent delete you should make yourself)
-- touches `Documents`, `Desktop`, `Downloads`, credentials, `settings.json`, memory or skills
+- sweeps anything inside Documents, Desktop, Downloads, Pictures, Movies or Music on its own. Only a
+  confirm-tier rule you approve can reach in there, and `scan --paths` lists those paths first.
+- touches credentials (`~/.ssh`, `~/.gnupg`, `~/.aws`, the Keychain), your agents' settings and
+  instructions (`settings.json`, `CLAUDE.md`, `AGENTS.md`, rules, hooks), memory or skills, or anything
+  inside them, even when a rule you or an agent wrote points there
 - deletes anything written in the last hour (re-checked just before each delete)
 - touches the running session (`CLAUDE_CODE_SESSION_ID`) or its desktop sandbox
-- removes a worktree with uncommitted changes
-- follows a symlink outside its folder, or deletes anything outside its rule's root
+- removes a worktree unless git shows nothing would be lost: no uncommitted or untracked files, no ignored
+  files beyond build output (an ignored `.env` counts as yours), and no commits that exist on no branch
+- follows a symlink outside its folder, or deletes anything outside its rule's root, however the path is
+  spelled (guards compare files by identity, so case, `..` and `//` don't matter)
 - deletes your Cowork `outputs/` or `uploads/`
+- deletes anything while your config file can't be read
 - runs Docker, Homebrew, uv or pnpm prune commands when pointed at a test sandbox (`--home`)
+
+Every path it removes is logged to `~/.cache/storage-steward/removed.log`.
 
 ## FAQ
 
@@ -229,14 +271,20 @@ they all fill.
 <details><summary><b>Will it delete my transcripts?</b></summary>
 
 Not on its own. Transcripts older than 30 days are a confirm-tier item. `--retention` sets Claude Code's own
-`cleanupPeriodDays`; leave it out to keep the 30-day default.
+`cleanupPeriodDays`; it's off unless you pass it, and uninstall reverts it.
+</details>
+
+<details><summary><b>How do I see what it removed?</b></summary>
+
+`steward.py report` shows the total reclaimed. Every removed path is listed, with its rule, size and time,
+in `~/.cache/storage-steward/removed.log`. To see what a sweep would remove before it runs, use
+`steward.py scan --paths`.
 </details>
 
 <details><summary><b>How do I uninstall it?</b></summary>
 
-Run `python3 ~/.agents/skills/storage-steward/scripts/steward.py uninstall`. It removes only its own hooks
-from every agent, plus the OS timer if you added one. Each install also saves a backup next to every config
-file it edits.
+See [Uninstall](#uninstall). Each install also saves a backup next to every config file it edits (the two
+newest are kept).
 </details>
 
 ## Reproduce the benchmarks
@@ -246,7 +294,7 @@ python3 -m unittest discover tests -v
 ```
 
 ```bash
-python3 bench/simulate.py --days 60 --seed 7 --workdir /tmp/ss-sim --out bench/results/sim_typical_s7.json
+for seed in 7 11 23; do python3 bench/simulate.py --days 60 --seed $seed --workdir /tmp/ss-sim --out bench/results/sim_typical_s$seed.json; done
 ```
 
 ```bash
@@ -254,12 +302,21 @@ python3 bench/simulate.py --days 60 --seed 7 --runaway --workdir /tmp/ss-sim --o
 ```
 
 ```bash
-python3 bench/build_site.py
+python3 bench/build_results.py && python3 bench/make_readme_chart.py && python3 bench/build_site.py
 ```
+
+`bench/build_results.py` turns those four runs into the data behind the charts, the website and the benchmark
+report. Each 60-day run takes a few minutes.
 
 `bench/make_fixture.py` builds the fake Mac home used for the token evals. It includes traps: deliverables,
 a dirty worktree, an active project, the live session, and Documents and Downloads. `bench/grade_evals.py`
 grades the runs. Aggregate results are in `bench/results/`.
+
+## Feedback
+
+Found a bug or a leftover it should know about? [Open an issue](https://github.com/deaglecodes/storage-steward/issues).
+If it ever deleted something it shouldn't have, please report it privately as described in
+[SECURITY.md](SECURITY.md). What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

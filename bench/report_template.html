@@ -320,7 +320,7 @@ function caveats() {
     "Iteration 1's baselines could read the fixture's answer key, and two of them did. Iteration 2 moved it out of the sandbox and ran each configuration twice.",
     "The normal analysis task didn't separate the two configurations. Plain Claude also streamed the 2M log lines and left nothing behind. In real use the skill wouldn't load for that task; only its ~190-token description is in context.",
     `Hooks were measured over 20 runs: ${Math.round(DATA.hooks.prompt_hook_ms_median)} ms median for the prompt check and ${Math.round(DATA.hooks.stop_hook_ms_median)} ms for the stop hook, with 0 bytes printed when the disk is healthy.`,
-    "In the iteration-1 cleanup baseline, Claude Code's own rm safety check blocked the agent's deletes. It moved files to Trash instead, so it freed 0 bytes. The skill's script deletes in Python, behind its own guards: a strict root, a never-delete list, no symlink following, the current session and anything under 1 hour old protected. 13 unit tests cover those guards.",
+    "In the iteration-1 cleanup baseline, the agent improvised rm commands, Claude Code's safety check stopped them, and the files went to the Trash instead, so it freed 0 bytes. With the skill, every delete goes through one reviewed script whose guards are stricter than an ad-hoc rm: a strict root per rule, a never-delete list, no symlink following, the current session and anything under 1 hour old protected. The unit tests in tests/test_steward.py cover each of those guards.",
   ];
   document.getElementById("caveats").innerHTML = items.map(t => `<li>${t}</li>`).join("");
 }

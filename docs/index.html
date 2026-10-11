@@ -119,7 +119,7 @@ input[type=range] { width: 100%; accent-color: var(--accent-hi); }
 .prow .when { font: 600 0.8rem var(--f-mono); color: var(--muted); min-width: 3.5em; text-align: right; }
 .chip.keep { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
 .chip.off { background: var(--track); color: var(--muted); text-decoration: line-through; }
-.cmds { display: grid; gap: 10px; }
+.cmds { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
 .cmds .cmd { font-size: 0.84rem; }
 .cmds .say { font-size: 0.9rem; color: var(--muted); }
 @media (max-width: 860px) { .policy { grid-template-columns: 1fr; } }
@@ -250,7 +250,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
         <div class="eyebrow">Agent skill · MIT · macOS + Linux · zero dependencies</div>
         <h1 id="hero-h">Your agents leave files behind. This <em>cleans up</em> as they work.</h1>
         <p class="lede">storage-steward stops the daily "my Mac is full" cleanup. Background hooks sweep agent leftovers for zero tokens. Caches you still use stay put, and anything that could be yours waits for your OK.</p>
-        <div class="cmd"><code id="cmd-1">git clone https://github.com/deaglecodes/storage-steward &amp;&amp; ./storage-steward/install.sh</code><button class="copy" data-copy="cmd-1">Copy</button></div>
+        <div class="cmd"><code id="cmd-1">git clone https://github.com/deaglecodes/storage-steward &amp;&amp; cd storage-steward &amp;&amp; ./install.sh</code><button class="copy" data-copy="cmd-1">Copy</button></div>
         <div class="ctas"><a class="btn primary" href="#install">Install in 30 seconds</a><a class="btn" href="benchmarks.html">Read the benchmarks</a></div>
         <div class="proof"><span><b>79–85%</b> less disk used</span><span><b>0</b> files lost</span><span><b>0</b> tokens per prompt</span></div>
         <div class="works"><span class="eyebrow">Works with</span><span class="chipset"><i>Claude Code</i><i>Codex</i><i>Cursor</i><i>Gemini CLI</i><i>OpenCode</i><i>Copilot CLI</i><i>any SKILL.md agent</i></span></div>
@@ -281,7 +281,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
   <section id="leaks" aria-labelledby="leaks-h">
     <div class="wrap">
       <div class="sec-head"><div class="eyebrow">The problem</div><h2 id="leaks-h">Where the space goes</h2>
-        <p class="lede">Agents write a lot of disk that nobody cleans up. Each of these comes from a public bug report, and none has a built-in fix.</p></div>
+        <p class="lede">Agents write a lot of disk that nobody cleans up. Each of these comes from a public bug report. Four were closed as not planned and two are still open.</p></div>
       <div class="bento">
         <article class="leak hot wide"><div class="big">771<small>GB</small></div><h3>Background task output from one session</h3>
           <p>Claude Code stores what every background task prints, without a size limit and without ever deleting it. Users report a 1 TB drive filling in minutes.</p>
@@ -394,7 +394,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
   <section aria-labelledby="safe-h">
     <div class="wrap">
       <div class="sec-head"><div class="eyebrow">Safety</div><h2 id="safe-h">What it will never do</h2>
-        <p class="lede">These rules are enforced in code, and 25 unit tests cover the guards.</p></div>
+        <p class="lede">These rules are enforced in code at the moment of each delete, whatever a rule or your config says, and unit tests cover every one.</p></div>
       <ul class="never" id="never"></ul>
     </div>
   </section>
@@ -404,13 +404,14 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
       <div class="sec-head"><div class="eyebrow">Install</div><h2 id="install-h">Thirty seconds, then forget about it</h2>
         <p class="lede">You need Python 3.9 or newer and any coding agent. There's nothing else to install.</p></div>
       <div class="steps">
-        <div class="step"><div><h3>Get the code</h3><div class="cmd"><code id="cmd-2">git clone https://github.com/deaglecodes/storage-steward</code><button class="copy" data-copy="cmd-2">Copy</button></div></div></div>
-        <div class="step"><div><h3>Install the skill and hooks</h3>
-          <div class="cmd"><code id="cmd-3">./storage-steward/install.sh --retention 21</code><button class="copy" data-copy="cmd-3">Copy</button></div>
-          <p>This finds your agents and puts one copy of the skill in <code>~/.agents/skills</code>, with symlinks for the others. It backs up each agent's config, adds that agent's hooks and tests them. Add <code>--dry-run</code> to preview, or <code>--schedule</code> for agents without hooks.</p></div></div>
-        <div class="step"><div><h3>See what it can reclaim now</h3>
-          <div class="cmd"><code id="cmd-4">python3 ~/.agents/skills/storage-steward/scripts/steward.py scan</code><button class="copy" data-copy="cmd-4">Copy</button></div>
-          <p>This is a dry run and changes nothing. You can also just ask your agent "why is my disk full?" and the skill handles it.</p></div></div>
+        <div class="step"><div><h3>Get the code</h3><div class="cmd"><code id="cmd-2">git clone https://github.com/deaglecodes/storage-steward &amp;&amp; cd storage-steward</code><button class="copy" data-copy="cmd-2">Copy</button></div></div></div>
+        <div class="step"><div><h3>Preview, then install</h3>
+          <div class="cmd"><code id="cmd-3">./install.sh --dry-run</code><button class="copy" data-copy="cmd-3">Copy</button></div>
+          <div class="cmd"><code id="cmd-5">./install.sh</code><button class="copy" data-copy="cmd-5">Copy</button></div>
+          <p>The dry run writes nothing. The install finds your agents and puts one copy of the skill in <code>~/.agents/skills</code>, with symlinks for the others. It backs up each agent's config, adds that agent's hooks and tests them. Add <code>--schedule</code> for agents without hooks. To update, <code>git pull</code> and run it again.</p></div></div>
+        <div class="step"><div><h3>See exactly what it would remove</h3>
+          <div class="cmd"><code id="cmd-4">python3 ~/.agents/skills/storage-steward/scripts/steward.py scan --paths</code><button class="copy" data-copy="cmd-4">Copy</button></div>
+          <p>This is a dry run and changes nothing; drop <code>--paths</code> for a summary. You can also just ask your agent "why is my disk full?" and the skill handles it. To remove everything later, run the same script with <code>uninstall</code>.</p></div></div>
       </div>
     </div>
   </section>
@@ -421,8 +422,8 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
       <div class="faq">
         <details><summary>Will it slow down my prompts?</summary><p>No. The prompt hook takes about 61 ms (mostly Python startup) and prints nothing unless free space is low. The cleanup itself runs in a separate background process after a session stops.</p></details>
         <details><summary>Which agents does it work with?</summary><p>Any agent that reads <code>SKILL.md</code>. The installer adds native hooks for Claude Code (<code>Stop</code>, <code>SessionEnd</code>), Codex (<code>Stop</code>), Cursor (<code>stop</code>, <code>sessionEnd</code>) and Gemini CLI (<code>AfterAgent</code>, <code>SessionEnd</code>), each in that agent's output format. <code>--schedule</code> adds a launchd, systemd or cron timer for OpenCode, Copilot CLI, Aider or anything else.</p></details>
-        <details><summary>Will it delete my Claude transcripts?</summary><p>Not on its own. Transcripts older than 30 days are a confirm-tier item. <code>--retention 21</code> sets Claude Code's built-in <code>cleanupPeriodDays</code>, which is Claude Code's own deletion; leave it out to keep the 30-day default.</p></details>
-        <details><summary>How do I see what it removed, or undo the install?</summary><p><code>steward.py report</code> shows the total reclaimed, from a local ledger. <code>steward.py uninstall</code> removes only its hooks, and a backup of your settings is saved on every install.</p></details>
+        <details><summary>Will it delete my Claude transcripts?</summary><p>Not on its own. Transcripts older than 30 days are a confirm-tier item. If you pass <code>--retention 21</code>, the installer also sets Claude Code's built-in <code>cleanupPeriodDays</code>, which is Claude Code's own deletion. It's off unless you ask, and uninstall reverts it.</p></details>
+        <details><summary>How do I see what it removed, or undo the install?</summary><p><code>steward.py scan --paths</code> lists what a sweep would remove before it runs. Every path it does remove is logged, with its rule and size, to <code>~/.cache/storage-steward/removed.log</code>, and <code>steward.py report</code> shows the total. <code>steward.py uninstall</code> removes the hooks, the skill and the timer, and reverts <code>--retention</code>; <code>--purge</code> also removes your policy and the log.</p></details>
         <details><summary>Does it run on Linux?</summary><p>Yes. Paths fall back to <code>/tmp</code>, <code>~/.cache</code> and so on. Second-chance eviction relies on <code>relatime</code>, the default on most Linux filesystems. On a <code>noatime</code> mount it detects that and never evicts caches on its own.</p></details>
       </div>
     </div>
@@ -437,7 +438,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
 </footer>
 
 <script>
-const SIM = {"series":{"typical":{"none":[7.7,12.1,17.4,21.6,26.8,31.6,36.9,41.6,46.8,51.2,56.6,60.9,67.5,72.2,77.8,82.4,87.6,92.3,97.2,101.2,106.4,110.9,115.7,120.2,126.4,131.5,136.3,140.5,146.2,150.4,155.7,159.8,164.7,169.1,174.1,179.7,186.2,190.8,195.4,199.7,205.0,209.4,214.8,219.1,224.3,229.1,234.3,238.7,245.3,249.8,255.0,259.4,264.0,268.3,273.3,278.1,283.7,288.2,293.1,297.4],"daily-nuke":[1.3,1.5,2.3,2.5,3.3,4.0,4.8,5.0,5.8,6.0,7.3,7.5,8.3,8.5,9.3,10.0,10.8,11.0,11.8,12.0,13.3,13.5,14.3,14.5,15.3,16.0,16.8,17.0,17.8,18.0,19.3,19.4,20.3,20.4,21.3,21.9,22.8,22.9,23.8,23.9,25.3,25.4,26.3,26.4,27.3,27.9,28.8,28.9,29.8,29.9,31.3,31.4,32.3,32.4,33.3,33.9,34.8,34.9,35.8,35.9],"steward":[7.7,10.7,14.4,14.4,16.0,17.0,18.5,19.2,20.7,21.1,22.4,23.0,25.8,26.7,28.1,28.9,30.4,30.9,31.5,32.0,33.6,34.7,35.8,35.3,37.1,38.5,39.3,39.9,41.8,41.8,43.4,43.5,44.8,45.4,46.6,46.8,49.0,49.7,49.5,50.2,51.6,52.1,53.4,53.7,54.9,55.1,56.3,55.1,57.6,58.0,59.4,60.0,60.1,60.8,61.9,62.7,64.2,64.6,65.2,63.7],"steward+weekly":[7.7,10.7,14.4,14.4,16.0,17.0,18.5,19.2,20.7,21.1,22.4,23.0,25.8,24.6,26.0,26.8,28.3,28.8,29.5,29.9,30.9,32.0,33.1,32.5,34.3,35.8,36.6,35.0,37.0,37.0,38.6,38.7,40.0,40.6,38.9,39.2,41.3,42.0,41.9,42.6,43.9,41.3,42.6,42.9,44.1,44.3,45.5,44.3,43.1,43.5,44.9,45.6,45.7,46.3,47.4,43.4,44.9,45.3,45.9,44.5]},"runaway":{"none":[141.1,199.9,204.7,208.8,267.4,272.3,277.3,281.6,286.5,291.0,296.8,300.9,307.3,311.6,317.0,321.7,326.8,331.2,336.6,367.2,372.5,377.1,382.0,386.2,392.6,397.4,402.3,406.3,411.8,415.9,421.3,425.6,483.6,617.0,622.3,628.0,634.4,638.7,643.9,648.0,653.3,657.8,662.9,667.4,672.3,677.3,767.0,771.5,777.8,782.3,787.8,792.2,877.2,881.3,886.3,891.1,987.3,991.7,996.7,1001.0],"daily-nuke":[1.3,1.5,2.3,2.5,3.3,4.0,4.8,5.0,5.8,6.0,7.3,7.5,8.3,8.5,9.3,10.0,10.8,11.0,11.8,12.0,13.3,13.5,14.3,14.5,15.3,16.0,16.8,17.0,17.8,18.0,19.3,19.4,20.3,20.4,21.3,21.9,22.8,22.9,23.8,23.9,25.3,25.4,26.3,26.4,27.3,27.9,28.8,28.9,29.8,29.9,31.3,31.4,32.3,32.4,33.3,33.9,34.8,34.9,35.8,35.9],"steward":[141.1,65.0,14.0,14.3,69.5,17.0,18.2,18.8,20.3,21.2,22.7,22.7,25.6,26.2,27.9,28.8,30.2,30.5,32.0,58.4,33.7,34.8,35.8,34.9,37.2,38.2,39.4,39.6,41.5,41.8,43.4,43.7,97.8,174.3,46.7,46.7,48.9,49.1,50.0,50.0,51.4,52.0,53.0,53.9,54.4,55.2,140.8,55.1,57.2,57.8,59.5,59.9,140.4,60.5,61.8,62.6,154.7,64.4,65.3,63.7],"steward+weekly":[141.1,65.0,14.0,14.3,69.5,17.0,18.2,18.8,20.3,21.2,22.7,22.7,25.6,24.8,26.5,27.4,28.8,29.1,30.6,57.1,31.0,32.0,33.1,32.2,34.4,35.4,36.6,34.0,36.0,36.3,37.9,38.2,92.3,168.8,38.4,38.4,40.6,40.8,41.7,41.6,43.1,40.7,41.7,42.6,43.1,43.9,129.5,43.8,42.3,42.9,44.6,45.0,125.5,45.6,46.8,43.5,135.6,45.3,46.2,44.6]}},"cost":{"typical":{"none":{"misses":0,"miss_gb":0.0,"lost":0,"deliv":104},"daily-nuke":{"misses":878,"miss_gb":41.8,"lost":104,"deliv":104},"steward":{"misses":1,"miss_gb":0.0,"lost":0,"deliv":104},"steward+weekly":{"misses":1,"miss_gb":0.0,"lost":0,"deliv":104},"steward-age-only":{"misses":35,"miss_gb":0.9,"lost":0,"deliv":104}},"runaway":{"none":{"misses":0,"miss_gb":0.0,"lost":0,"deliv":91},"daily-nuke":{"misses":910,"miss_gb":42.3,"lost":91,"deliv":91},"steward":{"misses":4,"miss_gb":0.1,"lost":0,"deliv":91},"steward+weekly":{"misses":4,"miss_gb":0.1,"lost":0,"deliv":91},"steward-age-only":{"misses":35,"miss_gb":0.9,"lost":0,"deliv":91}}}};
+const SIM = {"series":{"typical":{"none":[7.7,12.1,17.3,21.5,26.6,31.4,36.6,41.3,46.4,50.8,56.1,60.4,66.9,71.6,77.1,81.7,86.8,91.5,96.3,100.3,105.4,109.9,114.6,119.1,125.2,130.3,135.0,139.2,144.8,149.0,154.2,158.3,163.1,167.4,172.4,178.0,184.4,189.0,193.5,197.8,203.0,207.4,212.7,217.0,222.0,226.8,231.9,236.4,242.9,247.4,252.5,256.9,261.4,265.6,270.6,275.4,280.9,285.4,290.2,294.4],"daily-nuke":[1.3,1.5,2.2,2.4,3.1,3.8,4.5,4.7,5.4,5.6,6.8,7.0,7.7,7.9,8.6,9.3,10.0,10.2,10.9,11.1,12.3,12.5,13.2,13.4,14.1,14.7,15.5,15.6,16.4,16.5,17.8,17.9,18.7,18.8,19.6,20.2,21.0,21.1,21.9,22.0,23.3,23.4,24.2,24.3,25.1,25.7,26.5,26.6,27.4,27.5,28.7,28.9,29.6,29.8,30.5,31.2,31.9,32.1,32.8,33.0],"steward":[7.7,10.7,14.3,14.3,15.8,16.8,18.2,18.9,20.3,20.7,21.9,22.5,25.2,26.1,27.4,28.2,29.5,30.1,30.6,31.0,32.6,33.7,34.7,34.2,35.9,37.3,38.0,38.6,40.4,40.4,41.9,42.0,43.2,43.8,44.8,45.1,47.1,47.9,47.6,48.3,49.5,50.1,51.3,51.6,52.7,52.9,54.0,52.8,55.1,55.5,56.8,57.5,57.5,58.1,59.1,59.9,61.4,61.7,62.3,60.8],"steward+weekly":[7.7,10.7,14.3,14.3,15.8,16.8,18.2,18.9,20.3,20.7,21.9,22.5,25.2,24.3,25.6,26.4,27.8,28.3,28.9,29.3,30.3,31.4,32.4,31.8,33.5,35.0,35.7,34.5,36.3,36.3,37.8,37.9,39.1,39.7,38.2,38.5,40.5,41.2,41.0,41.7,42.9,40.6,41.8,42.1,43.2,43.4,44.5,43.3,42.3,42.7,44.0,44.7,44.7,45.3,46.3,42.7,44.1,44.5,45.1,43.6]},"runaway":{"none":[141.1,199.9,204.6,208.7,267.2,272.1,277.0,281.3,286.1,290.6,296.3,300.4,306.7,311.0,316.3,321.0,326.0,330.4,335.7,366.3,371.5,376.1,380.9,385.1,391.4,396.2,401.0,405.0,410.4,414.5,419.8,424.1,482.0,615.4,620.6,626.3,632.6,636.9,642.0,646.1,651.3,655.8,660.7,665.3,670.1,675.0,764.7,769.2,775.4,779.9,785.3,789.6,874.5,878.6,883.6,888.4,984.5,988.9,993.8,998.1],"daily-nuke":[1.3,1.5,2.2,2.4,3.1,3.8,4.5,4.7,5.4,5.6,6.8,7.0,7.7,7.9,8.6,9.3,10.0,10.2,10.9,11.1,12.3,12.5,13.2,13.4,14.1,14.7,15.5,15.6,16.4,16.5,17.8,17.9,18.7,18.8,19.6,20.2,21.0,21.1,21.9,22.0,23.3,23.4,24.2,24.3,25.1,25.7,26.5,26.6,27.4,27.5,28.7,28.9,29.6,29.8,30.5,31.2,31.9,32.1,32.8,33.0],"steward":[141.1,65.0,13.9,14.2,69.3,16.8,17.9,18.5,19.9,20.8,22.2,22.2,25.0,25.6,27.2,28.1,29.4,29.7,31.1,57.5,32.7,33.8,34.7,33.8,36.0,37.0,38.0,38.2,40.1,40.4,41.9,42.2,96.2,172.7,45.0,45.0,47.1,47.3,48.1,48.0,49.4,50.0,50.9,51.8,52.2,53.0,138.4,52.8,54.8,55.4,57.0,57.4,137.8,57.9,59.1,59.9,151.9,61.5,62.4,60.8],"steward+weekly":[141.1,65.0,13.9,14.2,69.3,16.8,17.9,18.5,19.9,20.8,22.2,22.2,25.0,24.4,26.0,26.9,28.2,28.5,29.9,56.4,30.4,31.4,32.4,31.5,33.6,34.6,35.7,33.6,35.4,35.7,37.2,37.5,91.5,168.0,37.8,37.8,39.9,40.1,40.9,40.8,42.2,40.1,40.9,41.8,42.2,43.0,128.5,42.8,41.5,42.1,43.7,44.1,124.5,44.6,45.7,42.8,134.7,44.4,45.3,43.6]}},"cost":{"typical":{"none":{"misses":0,"miss_gb":0.0,"lost":0,"deliv":104},"daily-nuke":{"misses":878,"miss_gb":41.8,"lost":104,"deliv":104},"steward":{"misses":1,"miss_gb":0.0,"lost":0,"deliv":104},"steward+weekly":{"misses":1,"miss_gb":0.0,"lost":0,"deliv":104},"steward-age-only":{"misses":35,"miss_gb":0.9,"lost":0,"deliv":104}},"runaway":{"none":{"misses":0,"miss_gb":0.0,"lost":0,"deliv":91},"daily-nuke":{"misses":910,"miss_gb":42.3,"lost":91,"deliv":91},"steward":{"misses":4,"miss_gb":0.1,"lost":0,"deliv":91},"steward+weekly":{"misses":4,"miss_gb":0.1,"lost":0,"deliv":91},"steward-age-only":{"misses":35,"miss_gb":0.9,"lost":0,"deliv":91}}}};
 const TOK = [{"task": "Free up space now", "with": 26292, "without": 63159, "secs_with": 37.9, "secs_without": 197.1}, {"task": "Make cleanup automatic", "with": 30602, "without": 212837, "secs_with": 95.6, "secs_without": 797.0}];
 const POL = [
   { k: "none", name: "No cleanup", c: "--none", dash: true },
@@ -524,9 +525,10 @@ function tok() {
 }
 
 const CHECK = `<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="none" stroke="var(--keep)" stroke-width="1.6"/><path d="M6 10.4l2.6 2.6L14 7.6" fill="none" stroke="var(--keep)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-$("never").innerHTML = ["Empty your Trash, which is a permanent delete you should make yourself", "Touch Documents, Desktop or Downloads", "Delete anything written in the last hour",
-  "Touch the session that's running right now", "Remove a worktree with uncommitted changes", "Follow a symlink outside its folder",
-  "Delete your Cowork outputs or uploads", "Remove a cache that's still being read"].map(t => `<li>${CHECK}<span>${t}</span></li>`).join("");
+$("never").innerHTML = ["Empty your Trash, which is a permanent delete you should make yourself", "Sweep Documents, Desktop or Downloads on its own", "Touch the running session, or anything written in the last hour",
+  "Remove a worktree unless git shows nothing would be lost", "Reach outside its folder, by symlink or any other spelling",
+  "Delete your Cowork outputs or uploads", "Remove a cache that's still being read",
+  "Delete anything while your config file can't be read"].map(t => `<li>${CHECK}<span>${t}</span></li>`).join("");
 
 document.querySelectorAll(".copy").forEach(b => b.addEventListener("click", async () => {
   const text = $(b.dataset.copy).textContent;
