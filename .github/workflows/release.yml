@@ -1,0 +1,45 @@
+name: release
+# Push a tag like v0.2.0 to publish. The full test matrix must pass first, the tag must match the
+# version in steward.py, and the .skill asset is built from the tagged tree, never uploaded by hand.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Tag matches the code version
+        run: |
+          version=$(python storage-steward/scripts/steward.py --version | awk '{print $2}')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag is $GITHUB_REF_NAME but steward.py reports $version"; exit 1
+          fi
+      - name: Release notes from CHANGELOG.md
+        run: |
+          awk -v v="${GITHUB_REF_NAME#v}" '
+            $0 ~ "^## \\[" v "\\]" {on=1; next}
+            on && /^## \[/ {exit}
+            on {print}' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "::error::CHANGELOG.md has no section for ${GITHUB_REF_NAME#v}"; exit 1
+          fi
+      - name: Build the skill
+        run: python tools/package_skill.py --out dist/storage-steward.skill
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/storage-steward.skill \
+            --verify-tag --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
