@@ -132,7 +132,8 @@ def page_weight(html: str, fonts: str) -> float:
         saved = {}
     if saved.get("key") == key:
         return saved["kb"]
-    html_gz, font = len(gzip.compress(html.encode(), 6)), font_bytes(fonts)
+    # GitHub Pages serves this page gzipped at the equivalent of level 5; the weight's own digits are a stand-in.
+    html_gz, font = len(gzip.compress(html.replace("__WEIGHT__", "00.0").encode(), 5)), font_bytes(fonts)
     kb = round((html_gz + font) / 1000, 1)
     record.write_text(json.dumps({"key": key, "kb": kb, "html_gzip_bytes": html_gz, "font_bytes": font}, indent=1) + "\n")
     return kb
@@ -164,9 +165,9 @@ def main() -> None:
             .replace("__NONE_GB__", str(round(none[-1]))).replace("__ST_GB__", str(round(steward[-1]))))
     fonts = font_url(html)
     html = html.replace("__FONTS__", fonts)
+    html = html.replace("__CSP__", csp(html))   # the policy pins the scripts; the weight sits outside them
     weight = page_weight(html, fonts)
     html = html.replace("__WEIGHT__", f"{weight:.1f}")
-    html = html.replace("__CSP__", csp(html))
     leftover = re.findall(r"__[A-Z_]+__", html)
     if leftover:
         raise SystemExit(f"unfilled placeholders: {sorted(set(leftover))}")
