@@ -1,6 +1,9 @@
 ---
 name: storage-steward
 description: Keeps disk storage healthy while coding agents work, in Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Copilot CLI or any agent that reads SKILL.md. Prevents and sweeps agent leftovers (background task output, desktop-app sandboxes, stale worktrees, old transcripts and sessions, npx/uv/pnpm/pip/Xcode caches) using token-cheap commands and zero-token hooks, without deleting user data or slowing the next build. Use this whenever disk space or storage comes up ("my Mac is full", "System Data is huge", low disk warnings, cleaning caches/temp files/leftovers), when the user wants cleanup to happen automatically instead of by hand, before writing anything big (model downloads, docker builds, datasets, monorepo installs, new worktrees), and when long sessions or many subagents might be filling the disk, even if the user never names this skill.
+license: MIT
+metadata:
+  version: "0.2.0"
 ---
 
 # Storage Steward
@@ -13,7 +16,7 @@ you are. Hooks or an OS timer do the recurring work at zero token cost. You prev
 you work. Anything that might be user data goes to the user.
 
 `S` below means `python3 <this-skill-dir>/scripts/steward.py`. It uses only the Python standard library
-(3.9+), and every command prints at most ~15 lines. The table below is the complete interface, so
+(3.9+), and its output is short (`scan` is about 15 lines). The table below is the complete interface, so
 there's no need for `--help` or to read the script source. `install` self-tests its own hooks.
 
 ## Keep it token-cheap
@@ -27,10 +30,11 @@ Open `references/targets.md` only when someone asks why a path is safe or what a
 |---|---|
 | `S status` | one line: free space, flags LOW |
 | `S scan` | dry run grouped by tier (auto / confirm / info) |
+| `S scan --only RULE --paths` | every path that rule would remove (show these before asking for approval) |
 | `S sweep` | reclaims the auto tier, prints one line |
 | `S sweep --tier confirm --only RULE[,RULE] --yes` | reclaims named confirm-tier rules, only after the user agrees |
-| `S report` | total reclaimed so far (for showing value) |
-| `S install [--agents auto] [--schedule] [--retention 21]` / `S uninstall` | turn automation on or off |
+| `S report` | total reclaimed so far, and where the per-path removal log is |
+| `S install [--agents auto] [--schedule]` / `S uninstall [--purge]` | turn automation on or off |
 | `S schedule install` | an OS timer only (launchd, systemd or cron), for agents without hooks |
 | `S rules` | the effective policy: every rule, its tier and age threshold, the keep list |
 | `S config set RULE --tier auto\|confirm\|info\|off --idle 14d` | change one rule (`--idle` takes `14`, `14d` or `6h`) |
@@ -60,8 +64,10 @@ hooks in each agent's own format:
 - **Background sweep:** it runs detached, throttled to once every 3 hours (immediately when disk is low).
   The agent never waits for it.
 - **Safe to repeat:** every edited file is backed up, and existing hooks from other tools are kept.
-  `install` is idempotent, and `uninstall` removes only these hooks.
-- **`--retention 21`:** also sets Claude Code's built-in transcript retention.
+  `install` is idempotent. `uninstall` removes these hooks, the skill links and copy, and the timer;
+  `--purge` also removes the user's policy and the removal log.
+- **`--retention 21`:** also sets Claude Code's built-in transcript retention, so Claude Code itself deletes
+  transcripts older than 21 days. Add it only if the user asks for shorter retention.
 
 ## Tweak what goes and what stays (when the user asks)
 
@@ -79,12 +85,12 @@ line. Run `S rules` first only if you need rule names.
 | "undo that" | `S config unset RULE` / `S config unkeep PATH` / `S config drop NAME` |
 
 Guard rails you can rely on (and should mention when relevant):
-- `keep` beats every rule.
-- Custom rules must name a folder below `~`; `~/*` and paths outside home are refused.
-- Custom rules inside Documents, Desktop, Downloads, Pictures, Movies or Music are capped at confirm, so
-  automatic sweeps never reach into personal folders.
-- A broken config file never breaks a hook. The steward falls back to defaults, and `scan` reports the
-  problem.
+- `keep` beats every rule. A name pattern like `'*.mov'` also keeps any folder that contains a match.
+- Custom rules must name a folder below `~`; `~/*`, `..` and paths outside home are refused.
+- Nothing inside Documents, Desktop, Downloads, Pictures, Movies or Music is ever swept automatically,
+  whatever the tier; rules there are capped at confirm.
+- A broken config file never breaks a hook, but it pauses all deletes until it's fixed (`scan` says why).
+  If the user wants cleanup to resume, run `S config show` and fix the reported problem with them.
 
 ## While you work: don't create the mess
 
@@ -117,8 +123,9 @@ These habits matter more than any sweep, because they stop the big leaks at the 
 - **confirm:** recoverable only from somewhere else, or part of the user's history. Examples: clean
   agent worktrees, transcripts and Codex/Gemini/Copilot sessions older than 30 days, Cursor workspace
   storage, `node_modules`/`.venv` of projects idle for 30+ days, old Playwright browsers, Docker build
-  cache. Show the user the rule names and sizes from `scan`, then run `--only` with exactly the rules
-  they approve.
+  cache. Show the user the rule names and sizes from `scan`. For rules that touch their own folders
+  (`stale-project-deps`, `agent-worktrees`, their custom rules), also show `S scan --only RULE --paths`.
+  Then run `--only` with exactly the rules they approve; `sweep --tier confirm` refuses without it.
 - **info:** local models, the Cowork VM image, Codex DBs, Cowork `outputs/`, Trash. The script never
   deletes these. Tell the user what they are and how to handle them in their app.
 
@@ -126,9 +133,13 @@ The script refuses to touch:
 - anything written in the last hour
 - the current session (the session id from the hook, or `CLAUDE_CODE_SESSION_ID`/`GEMINI_SESSION_ID`)
   and its desktop sandbox
-- worktrees with uncommitted changes
-- `Documents`, `Desktop` and `Downloads`
+- worktrees unless git shows nothing would be lost (no uncommitted, untracked or non-build ignored files,
+  no commits on no branch)
+- anything inside Documents, Desktop, Downloads, Pictures, Movies or Music during an automatic sweep
 - credentials, settings, memory and skills
+- anything at all while the user's config file can't be read
+
+Every removed path is logged to `~/.cache/storage-steward/removed.log`.
 
 It also won't empty the Trash, which would be a permanent deletion the user should do themselves.
 

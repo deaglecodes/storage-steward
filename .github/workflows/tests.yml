@@ -1,21 +1,67 @@
 name: tests
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_call:      # release.yml runs the full suite before publishing
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
+    name: test (${{ matrix.os }}, py${{ matrix.python }})
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest]
-        python: ["3.9", "3.13"]
+        # 3.9 is the python3 that ships with the macOS Command Line Tools, which is what the hooks run
+        # under on a stock Mac. Keep it until the README stops promising 3.9+.
+        python: ["3.9", "3.14"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - name: Unit tests
         run: python -m unittest discover tests -v
       - name: Simulation smoke test (10 days)
         run: python bench/simulate.py --days 10 --workdir "$RUNNER_TEMP/sim" --out "$RUNNER_TEMP/sim.json"
+      - name: Packaged skill runs on its own
+        # Catches a release asset that is missing a module the scripts import.
+        run: |
+          python tools/package_skill.py --out "$RUNNER_TEMP/storage-steward.skill"
+          python -m zipfile -e "$RUNNER_TEMP/storage-steward.skill" "$RUNNER_TEMP/pkg"
+          steward="$RUNNER_TEMP/pkg/storage-steward/scripts/steward.py"
+          python "$steward" --version
+          python "$steward" --home "$RUNNER_TEMP/home" --tmp "$RUNNER_TEMP/t" --user-tmp "$RUNNER_TEMP/ut" scan
+      - name: Installer dry run writes nothing
+        run: |
+          home="$RUNNER_TEMP/dry"
+          mkdir -p "$home/.claude" "$home/.codex"
+          echo '{"hooks": {}}' > "$home/.claude/settings.json"
+          before=$(find "$home" -exec ls -ld {} + | sort)
+          HOME="$home" ./install.sh --dry-run
+          after=$(find "$home" -exec ls -ld {} + | sort)
+          if [ "$before" != "$after" ]; then
+            echo "::error::install.sh --dry-run changed the home directory"
+            diff <(echo "$before") <(echo "$after"); exit 1
+          fi
+  site:
+    name: site is up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: docs/ matches a fresh build of site/ and bench/results
+        run: |
+          python bench/build_site.py
+          git diff --exit-code --stat -- docs/ \
+            || { echo "::error::docs/ is stale: run python3 bench/build_site.py and commit"; exit 1; }

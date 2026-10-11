@@ -142,7 +142,8 @@ class World:
         if self.policy == "daily-nuke":
             self.nuke(day0 + 23 * HOUR)
         if self.policy == "steward+weekly" and d % 7 == 6:
-            self.steward(day0 + 22 * HOUR, None, "sweep", "--tier", "confirm", "--yes")
+            approved = ",".join(r.id for r in rules.RULES if r.tier == "confirm")   # the user OKs every rule listed
+            self.steward(day0 + 22 * HOUR, None, "sweep", "--tier", "confirm", "--only", approved, "--yes")
 
     def daily_tools(self, d: int, day0: float):
         p, rng = self.p, self.rng
@@ -200,14 +201,20 @@ class World:
                 self.use(pj / "node_modules", p["project_deps_mb"] * MB, t)
 
     def make_worktree(self, wt: Path, dirty: bool, t: float):
+        """A linked worktree of one main repo, the way agents make them (`git worktree add`)."""
         import subprocess
-        self.put(wt / "README.md", 4096, t)
-        (wt / ".gitignore").write_text("node_modules/\n")
-        git = ["git", "-C", str(wt), "-c", "user.email=s@s", "-c", "user.name=s",
-               "-c", "maintenance.auto=false", "-c", "gc.auto=0"]      # no detached writers
-        subprocess.run(["git", "init", "-q", str(wt)], check=True)
-        subprocess.run(git + ["add", "."], check=True)
-        subprocess.run(git + ["commit", "-qm", "wt"], check=True)
+        git = ["git", "-c", "user.email=s@s", "-c", "user.name=s", "-c", "maintenance.auto=false",
+               "-c", "gc.auto=0", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+               "-c", "init.defaultBranch=main"]                            # no detached writers, no user hooks
+        main = self.home / "code/app"
+        if not (main / ".git").exists():
+            self.put(main / "README.md", 4096, t)
+            (main / ".gitignore").write_text("node_modules/\n")
+            subprocess.run(git + ["init", "-q", str(main)], check=True)
+            subprocess.run(git + ["-C", str(main), "add", "."], check=True)
+            subprocess.run(git + ["-C", str(main), "commit", "-qm", "app"], check=True)
+        wt.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(git + ["-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True)
         self.entry(wt / "node_modules", self.p["worktree_mb"] * MB, t, files=3)
         if dirty:
             (wt / "README.md").write_text("uncommitted work")
@@ -254,6 +261,8 @@ class World:
         total = 0
         for root, _dirs, files in os.walk(self.base):
             for f in files:
+                if f == "removed.log":      # the steward's own audit log, not agent leftovers
+                    continue
                 try:
                     total += os.lstat(os.path.join(root, f)).st_size
                 except OSError:
