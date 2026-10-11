@@ -3,541 +3,480 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>storage-steward · keeps agents from filling your disk</title>
-<meta name="description" content="An agent skill for Claude Code, Codex, Cursor and Gemini CLI that cleans up agent leftovers as you work: zero tokens per prompt, no lost files, caches you still use are kept. 79–85% less disk use over 60 days in benchmarks.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-qOhFsq0QMV2REqNwk5hGH5bZE9SkX6gt6yeyKdYPv+U=' 'sha256-bwf5WRigVA2qhcVz3jbXKUbzSjszxSGV0V6AQr5ct/c='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>storage-steward · less disk, zero effort</title>
+<meta name="description" content="storage-steward cleans up after Claude Code, Codex, Cursor and Gemini CLI while they work. 79–85% less disk, zero tokens per prompt, no lost files.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0e13" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="storage-steward">
-<meta property="og:description" content="Your agents leave files behind. This cleans up as they work.">
+<meta property="og:description" content="Your coding agents leave gigabytes behind. storage-steward sweeps them while you work.">
 <meta property="og:image" content="https://deaglecodes.github.io/storage-steward/assets/og.png">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="theme-color" content="#0E1A2B">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@96,800&amp;text=%20%25%2C.0123456789BFIKLYacegilnoprstuy%E2%80%93&amp;display=swap">
+<script>document.documentElement.classList.add("js")</script>
 <style>
-/* Layout: instrument-panel editorial. One 1120px column; terminal panels stay dark in both themes. */
+/* One idea: the page fills with agent leftovers, gets swept, and almost nothing is left.
+   Fonts: system UI and mono (zero bytes), plus one display face subset to the glyphs on this page. */
 :root {
-  --paper: #f3f5f8; --surface: #ffffff; --ink: #0e1a2b; --ink-2: #26344a; --muted: #586579; --rule: #dde3eb;
-  --accent: #2f6fde; --accent-hi: #4d8dff; --nuke: #e8622c; --keep: #17a673; --none: #9aa1ab; --track: #e7ecf2;
-  --term: #0e1a2b; --term-2: #15233a; --term-fg: #dce6f3; --term-muted: #8796ab; --term-rule: #22334d;
-  --f-display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
-  --f-body: "Public Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
-  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --radius: 14px; --gutter: clamp(16px, 4vw, 40px); --section: clamp(64px, 9vw, 120px);
+  --bg: #f6f6f3; --ink: #0c1117; --muted: #5d6570; --faint: #bfc4ca; --rule: #e2e3de; --raise: #ffffff;
+  --accent: #2a62cc; --junk: #e05a26;
+  --f-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --f-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --f-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --gutter: clamp(16px, 5vw, 48px);
+  --section: clamp(128px, 18vw, 232px);
+  color-scheme: light;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --paper: #0a1018; --surface: #101926; --ink: #edf2f8; --ink-2: #c9d4e2; --muted: #98a5b7; --rule: #1f2c3e;
-  --accent: #6ea2ff; --accent-hi: #6ea2ff; --nuke: #f07a49; --keep: #2fbf86; --none: #6b7686; --track: #182436;
-  --term: #060b12; --term-2: #0c1522; --term-rule: #1b2a40; color-scheme: dark; } }
+  --bg: #0a0e13; --ink: #eef1f5; --muted: #9aa4b1; --faint: #3a4452; --rule: #1b222c; --raise: #10161e;
+  --accent: #6ea2ff; --junk: #f07a49; color-scheme: dark; } }
 :root[data-theme="dark"] {
-  --paper: #0a1018; --surface: #101926; --ink: #edf2f8; --ink-2: #c9d4e2; --muted: #98a5b7; --rule: #1f2c3e;
-  --accent: #6ea2ff; --accent-hi: #6ea2ff; --nuke: #f07a49; --keep: #2fbf86; --none: #6b7686; --track: #182436;
-  --term: #060b12; --term-2: #0c1522; --term-rule: #1b2a40; color-scheme: dark; }
+  --bg: #0a0e13; --ink: #eef1f5; --muted: #9aa4b1; --faint: #3a4452; --rule: #1b222c; --raise: #10161e;
+  --accent: #6ea2ff; --junk: #f07a49; color-scheme: dark; }
+
 *, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.55 var(--f-body); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
 [hidden] { display: none !important; }
-html { scroll-behavior: smooth; }
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; animation: none !important; } }
-body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.65 var(--f-body); -webkit-font-smoothing: antialiased; }
-a { color: var(--accent); text-underline-offset: 3px; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
-h1, h2, h3 { font-family: var(--f-display); margin: 0; text-wrap: balance; line-height: 1.05; }
-h2 { font-size: clamp(2rem, 1.3rem + 2.4vw, 3rem); font-weight: 800; letter-spacing: -0.025em; }
-h3 { font-size: 1.15rem; font-weight: 800; letter-spacing: -0.01em; line-height: 1.25; }
-p { margin: 0; }
-code, .mono { font-family: var(--f-mono); font-size: 0.9em; }
-.wrap { max-width: 1120px; margin: 0 auto; padding-inline: var(--gutter); }
-.eyebrow { font: 600 0.75rem/1 var(--f-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
-.lede { font-size: clamp(1.05rem, 1rem + 0.3vw, 1.2rem); color: var(--muted); max-width: 58ch; }
-section { padding-block: var(--section) 0; }
-.sec-head { display: grid; gap: 14px; margin-bottom: 40px; max-width: 760px; }
+.wrap { width: min(1080px, 100% - 2 * var(--gutter)); margin-inline: auto; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.d { font-family: var(--f-display); font-weight: 800; letter-spacing: -0.045em; line-height: 0.95; }
+.tag { font: 12px/1 var(--f-mono); color: var(--muted); margin: 0 0 clamp(28px, 4vw, 44px); }
+.tag::before { content: "~/"; opacity: 0.55; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.u, .links a { text-decoration: none; background: linear-gradient(currentColor, currentColor) 0 100% / 0 1px no-repeat; transition: background-size 0.35s var(--ease); }
+.u:hover, .links a:hover { background-size: 100% 1px; }
 
 /* nav */
-.nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; background: color-mix(in srgb, var(--paper) 86%, transparent); backdrop-filter: saturate(1.4) blur(10px); border-bottom: 1px solid color-mix(in srgb, var(--rule) 70%, transparent); }
-.nav .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 12px; }
-.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font: 800 1.1rem var(--f-display); letter-spacing: -0.02em; }
-.brand img { width: 30px; height: 30px; }
-.nav ul { display: flex; gap: 22px; list-style: none; margin: 0; padding: 0; font-size: 0.92rem; }
-.nav ul a { color: var(--muted); text-decoration: none; }
-.nav ul a:hover { color: var(--ink); }
-.gh { display: inline-flex; align-items: center; gap: 8px; font: 600 0.88rem var(--f-body); color: var(--surface); background: var(--ink); padding: 8px 14px; border-radius: 999px; text-decoration: none; }
-.gh svg { width: 16px; height: 16px; fill: currentColor; }
-@media (max-width: 760px) { .nav ul { display: none; } }
+.bar { position: absolute; inset: 0 0 auto; z-index: 3; }
+.bar .wrap { display: flex; align-items: center; justify-content: space-between; height: 76px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; letter-spacing: -0.01em; text-decoration: none; }
+.brand svg { width: 26px; height: 26px; }
+.links { display: flex; gap: clamp(14px, 3vw, 30px); font-size: 14px; }
 
-/* hero */
-.hero { padding-block: clamp(48px, 8vw, 96px) 0; }
-.hero .wrap { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: clamp(32px, 5vw, 64px); align-items: center; }
-.hero h1 { font-size: clamp(2.5rem, 1.5rem + 3.4vw, 4.1rem); font-weight: 800; letter-spacing: -0.035em; }
-.hero h1 em { font-style: normal; color: var(--accent); }
-.hero-copy { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; min-width: 0; }
-.cmd { display: flex; align-items: center; gap: 12px; background: var(--term); color: var(--term-fg); border-radius: 12px; padding: 12px 12px 12px 16px; font: 0.88rem var(--f-mono); max-width: 100%; }
-.cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 0.88rem; scrollbar-width: none; }
-.cmd code::before { content: "$ "; color: var(--term-muted); }
-.copy { flex: none; font: 600 0.78rem var(--f-body); color: var(--term-fg); background: var(--term-2); border: 1px solid var(--term-rule); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
-.copy:hover { border-color: var(--accent-hi); }
-.ctas { display: flex; flex-wrap: wrap; gap: 12px; }
-.btn { display: inline-flex; align-items: center; gap: 8px; font: 600 0.95rem var(--f-body); padding: 11px 18px; border-radius: 999px; text-decoration: none; border: 1px solid var(--rule); color: var(--ink); background: var(--surface); transition: transform 150ms ease, border-color 150ms ease; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn:hover { transform: translateY(-1px); border-color: var(--accent); }
-.proof { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 0.9rem; color: var(--muted); }
-.proof b { color: var(--ink); font-family: var(--f-display); font-size: 1.05rem; }
-.works { display: grid; gap: 10px; }
-.chipset { display: flex; flex-wrap: wrap; gap: 6px; }
-.chipset i { font: 500 0.8rem var(--f-body); font-style: normal; color: var(--ink-2); background: var(--surface); border: 1px solid var(--rule); border-radius: 999px; padding: 4px 10px; }
+/* hero: the mess, the sweep, and what's left */
+.hero { position: relative; min-height: 100svh; display: flex; flex-direction: column; overflow: hidden; }
+.hero-in { position: relative; z-index: 2; margin-block: auto; padding-top: 76px; }
+.less { font-size: clamp(104px, 22vw, 300px); line-height: 0.8; letter-spacing: -0.065em; margin: 0 0 0 -0.045em; width: fit-content; }
+.less .dot { display: inline-block; color: var(--accent); transform-origin: 50% 85%; }
+.lede { font-size: clamp(18px, 2.1vw, 23px); line-height: 1.45; color: var(--muted); max-width: 25em; margin: clamp(22px, 3vw, 38px) 0 28px; text-wrap: balance; }
+.lede b { color: var(--ink); font-weight: 600; }
+.cmd { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; background: var(--raise); border: 1px solid var(--rule); border-radius: 12px; padding: 6px 6px 6px 16px; }
+.cmd code { font: 13.5px/1.4 var(--f-mono); white-space: nowrap; overflow-x: auto; scrollbar-width: none; padding-block: 8px; }
+.cmd code::-webkit-scrollbar { display: none; }
+.copy { flex: none; min-width: 74px; font: 600 13px/1 var(--f-body); color: var(--bg); background: var(--ink); border: 0; border-radius: 8px; padding: 11px 14px; cursor: pointer; transition: transform 0.15s var(--ease), opacity 0.2s; }
+.copy:hover { opacity: 0.86; }
+.copy:active { transform: scale(0.96); }
+.works { width: fit-content; font-size: 13px; color: var(--muted); margin: 16px 0 0; }
+.js .hero-in > :not(.less) { animation: rise 0.9s var(--ease) both; }
+.js .hero-in > .lede { animation-delay: 0.08s; }
+.js .hero-in > .cmd { animation-delay: 0.16s; }
+.js .hero-in > .works { animation-delay: 0.24s; }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } }
 
-/* df panel */
-.panel { grid-template-columns: minmax(0, 1fr); background: var(--term); color: var(--term-fg); border-radius: 18px; padding: 18px 20px 20px; box-shadow: 0 30px 60px -30px rgb(14 26 43 / 0.55), 0 0 0 1px var(--term-rule); display: grid; gap: 16px; min-width: 0; font-family: var(--f-mono); }
-.panel-top { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: var(--term-muted); }
-.panel-top i { width: 10px; height: 10px; border-radius: 50%; background: var(--term-rule); display: inline-block; }
-.panel-top span { margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.df { display: grid; gap: 14px; }
-.df-row { display: grid; gap: 6px; }
-.df-label { display: flex; justify-content: space-between; gap: 10px; font-size: 0.84rem; }
-.df-label b { font-weight: 600; font-variant-numeric: tabular-nums; }
-.meter { height: 14px; border-radius: 4px; background: var(--term-2); box-shadow: inset 0 0 0 1px var(--term-rule); overflow: hidden; }
-.meter i { display: block; height: 100%; border-radius: 3px; transition: width 220ms ease; }
-.scrub { display: grid; gap: 8px; padding-top: 6px; border-top: 1px dashed var(--term-rule); }
-.scrub-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 0.8rem; color: var(--term-muted); }
-.scrub-row output { color: var(--term-fg); font-weight: 600; }
-input[type=range] { width: 100%; accent-color: var(--accent-hi); }
-.toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.8rem; color: var(--term-muted); }
-.toggle input { accent-color: var(--accent-hi); }
-@media (max-width: 900px) { .hero .wrap { grid-template-columns: 1fr; } }
+.status { position: relative; z-index: 2; display: flex; align-items: center; gap: 16px; padding-block: 22px 28px; font: 12px/1 var(--f-mono); color: var(--muted); }
+.status output { min-width: 13ch; font-variant-numeric: tabular-nums; }
+.meter { flex: 1; height: 2px; background: var(--rule); border-radius: 2px; overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0.04); transition: background-color 0.45s; }
+.meter.full i { background: var(--junk); }
+.again { font: inherit; color: inherit; background: none; border: 0; padding: 6px 0; cursor: pointer; transition: color 0.2s; }
+.again:hover { color: var(--ink); }
+.mess { position: absolute; inset: 0; z-index: 1; pointer-events: none; font: 13px/1 var(--f-mono); color: var(--faint); }
+.mess span { position: absolute; white-space: nowrap; }
+.sweep { position: absolute; top: 0; bottom: 0; left: 0; z-index: 2; width: 2px; background: var(--accent); opacity: 0; pointer-events: none;
+  box-shadow: 0 0 24px 5px color-mix(in srgb, var(--accent) 38%, transparent); }
+
+/* proof */
+.blk { padding-top: var(--section); }
+.stats { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 32px; margin-bottom: clamp(72px, 10vw, 120px); }
+.stat b { display: block; font-size: clamp(56px, 7.4vw, 112px); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.stat span { display: block; margin-top: 14px; color: var(--muted); font-size: 15px; }
+.chart { margin: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0 0 22px; font: 12px/1 var(--f-mono); color: var(--muted); }
+.legend i { display: inline-block; width: 16px; height: 2px; margin-right: 8px; vertical-align: middle; }
+.legend .lv { display: none; color: var(--ink); font-weight: 600; }
+.plot { position: relative; height: clamp(220px, 32vw, 380px); touch-action: pan-y; }
+.plot svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.plot .g { stroke: var(--rule); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.plot .l { fill: none; stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.k-none, .l-none { --c: var(--junk); }
+.k-st, .l-st { --c: var(--accent); }
+.legend i, .dotm { background: var(--c); }
+.plot .l { stroke: var(--c); }
+.y { position: absolute; left: 0; font: 11px/1 var(--f-mono); color: var(--muted); transform: translateY(-160%); }
+.end { position: absolute; right: 0; font-size: 13px; line-height: 1.25; text-align: right; white-space: nowrap; }
+.end b { font-weight: 600; }
+.dotm { position: absolute; right: 0; width: 9px; height: 9px; border-radius: 50%; transform: translate(50%, -50%); }
+.js .plot svg { clip-path: inset(-12px 100% -12px -12px); transition: clip-path 1.9s var(--ease); }
+.js .plot.drawn svg { clip-path: inset(-12px -12px -12px -12px); }
+.js .plot .end, .js .plot .dotm { opacity: 0; transition: opacity 0.5s 1.4s; }
+.js .plot.drawn .end, .js .plot.drawn .dotm { opacity: 1; }
+.hair { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ink); opacity: 0; pointer-events: none; transition: opacity 0.15s; }
+.tip { position: absolute; top: 4px; display: grid; gap: 2px; padding: 9px 11px; font: 12px/1.45 var(--f-mono); white-space: nowrap; background: var(--raise);
+  border: 1px solid var(--rule); border-radius: 8px; box-shadow: 0 10px 28px -14px rgb(0 0 0 / 0.3); transform: translateX(-50%); opacity: 0; pointer-events: none; transition: opacity 0.15s; }
+.tip span::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--c); }
+.plot.hov .hair { opacity: 0.25; }
+.plot.hov .tip { opacity: 1; }
+.note { margin: 24px 0 0; font-size: 14px; color: var(--muted); }
+
+/* how */
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(36px, 5vw, 64px); margin: 0; padding: 0; list-style: none; }
+.steps .n { font: 12px/1 var(--f-mono); color: var(--accent); }
+.steps h2 { font-size: clamp(36px, 4.4vw, 56px); margin: 18px 0 14px; }
+.steps p { margin: 0; color: var(--muted); max-width: 21em; }
+
+/* rules */
+.rules h2 { font-size: clamp(52px, 8.4vw, 112px); margin: 0 0 clamp(30px, 4vw, 46px); }
+.term { min-height: 8.6em; font: 15px/1.6 var(--f-mono); }
+.say { margin: 0 0 14px; font: 500 clamp(20px, 2.6vw, 28px)/1.3 var(--f-body); letter-spacing: -0.012em; }
+.run { margin: 0; white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
+.run .p { color: var(--muted); }
+.ok { margin: 8px 0 0; color: var(--accent); transition: opacity 0.3s; }
+.js .ok { opacity: 0; }
+.js .ok.on { opacity: 1; }
+.caret { display: inline-block; width: 0.55em; height: 1.15em; margin-left: 2px; vertical-align: text-bottom; background: var(--accent); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
 
 /* film */
-.film { padding-block: clamp(40px, 6vw, 72px) 0; }
-.film figure { margin: 0; display: grid; gap: 14px; }
-.film .frame { background: var(--term); border-radius: 20px; padding: 10px; box-shadow: 0 30px 70px -40px rgb(14 26 43 / 0.6), 0 0 0 1px var(--term-rule); }
-.film video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 12px; background: #0a1018; }
-.film figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; font-size: 0.86rem; color: var(--muted); }
+.play { display: inline-flex; align-items: center; gap: 16px; padding: 10px 24px 10px 10px; font: 600 16px/1 var(--f-body); color: var(--ink); background: none;
+  border: 1px solid var(--rule); border-radius: 999px; cursor: pointer; transition: border-color 0.25s, transform 0.2s var(--ease); }
+.play:hover { border-color: var(--ink); }
+.play:active { transform: scale(0.98); }
+.play .tri { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--ink); transition: transform 0.35s var(--ease); }
+.play:hover .tri { transform: scale(1.08); }
+.play .tri::after { content: ""; margin-left: 4px; border-left: 13px solid var(--bg); border-block: 8px solid transparent; }
+.play .dur { font: 12px/1 var(--f-mono); color: var(--muted); }
+.dlg { width: min(1120px, 100% - 32px); max-width: none; padding: 0; border: 0; border-radius: 16px; background: #000; overflow: hidden; }
+.dlg::backdrop { background: rgb(4 6 9 / 0.84); backdrop-filter: blur(6px); }
+.dlg video { display: block; width: 100%; aspect-ratio: 16 / 9; }
+.x { position: absolute; top: 10px; right: 10px; z-index: 1; width: 38px; height: 38px; font-size: 22px; line-height: 1; color: #fff; background: rgb(255 255 255 / 0.14); border: 0; border-radius: 50%; cursor: pointer; }
 
-/* your rules */
-.policy { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
-.prow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--rule); font-size: 0.94rem; }
-.prow:last-child { border-bottom: 0; }
-.prow small { color: var(--muted); font: 0.8rem var(--f-mono); }
-.prow .when { font: 600 0.8rem var(--f-mono); color: var(--muted); min-width: 3.5em; text-align: right; }
-.chip.keep { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
-.chip.off { background: var(--track); color: var(--muted); text-decoration: line-through; }
-.cmds { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
-.cmds .cmd { font-size: 0.84rem; }
-.cmds .say { font-size: 0.9rem; color: var(--muted); }
-@media (max-width: 860px) { .policy { grid-template-columns: 1fr; } }
+/* the end: what this page weighs */
+.foot { padding-block: var(--section) 40px; }
+.kb { margin: 0; font-size: clamp(92px, 17vw, 236px); letter-spacing: -0.065em; font-variant-numeric: tabular-nums; }
+.kb small { margin-left: 0.1em; font-size: 0.3em; letter-spacing: -0.02em; }
+.kb-cap { margin: 20px 0 clamp(80px, 11vw, 136px); color: var(--muted); }
+.fine { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 24px; padding-top: 22px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
+.fine nav { display: flex; gap: 22px; }
 
-/* leaks bento */
-.bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; }
-.leak { grid-column: span 2; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 22px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; min-width: 0; }
-.leak.wide { grid-column: span 3; }
-.leak .big { font: 800 clamp(2.4rem, 1.8rem + 2vw, 3.4rem)/1 var(--f-display); letter-spacing: -0.03em; }
-.leak .big small { font: 600 0.95rem var(--f-mono); color: var(--muted); letter-spacing: 0; margin-left: 6px; }
-.leak p { color: var(--muted); font-size: 0.95rem; }
-.leak .where { font: 0.78rem var(--f-mono); color: var(--ink-2); background: var(--track); padding: 4px 8px; border-radius: 6px; justify-self: start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.leak a.src { font-size: 0.82rem; }
-.leak.hot { background: var(--term); color: var(--term-fg); border-color: var(--term-rule); }
-.leak.hot p { color: var(--term-muted); } .leak.hot .where { background: var(--term-2); color: var(--term-fg); } .leak.hot a { color: var(--accent-hi); }
-@media (max-width: 860px) { .leak, .leak.wide { grid-column: span 3; } }
-@media (max-width: 560px) { .bento { grid-template-columns: 1fr; } .leak, .leak.wide { grid-column: auto; } }
+.js [data-reveal] { opacity: 0; transform: translateY(20px); transition: opacity 1s var(--ease), transform 1s var(--ease); transition-delay: var(--rd, 0s); }
+.js [data-reveal].in { opacity: 1; transform: none; }
 
-/* layers */
-.layers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
-.layer { background: var(--surface); padding: 26px 24px; display: grid; gap: 12px; align-content: start; }
-.layer .when { font: 600 0.74rem var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
-.layer p, .layer li { color: var(--muted); font-size: 0.95rem; }
-.layer ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
-@media (max-width: 860px) { .layers { grid-template-columns: 1fr; } }
-.tiers { margin-top: 18px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-.tier { border-radius: var(--radius); padding: 18px 20px; border: 1px solid var(--rule); background: var(--surface); display: grid; gap: 8px; align-content: start; }
-.chip { justify-self: start; align-self: start; font: 600 0.72rem var(--f-mono); letter-spacing: 0.06em; padding: 3px 9px; border-radius: 999px; }
-.chip.auto { background: color-mix(in srgb, var(--keep) 15%, transparent); color: var(--keep); }
-.chip.confirm { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
-.chip.info { background: var(--track); color: var(--muted); }
-.tier p { font-size: 0.9rem; color: var(--muted); }
-@media (max-width: 860px) { .tiers { grid-template-columns: 1fr; } }
-
-/* second chance */
-.chance { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: clamp(28px, 5vw, 64px); align-items: center; }
-.chance .copy-col { display: grid; gap: 16px; }
-.chance .copy-col p { color: var(--muted); }
-.diagram { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 18px; }
-.diagram svg { width: 100%; height: auto; display: block; }
-.diagram text { font-family: var(--f-mono); font-size: 12px; fill: var(--muted); }
-.diagram .t-ink { fill: var(--ink); font-family: var(--f-body); font-weight: 600; font-size: 13px; }
-@media (max-width: 860px) { .chance { grid-template-columns: 1fr; } }
-
-/* benchmarks */
-.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
-.kpi { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 20px; display: grid; gap: 6px; align-content: start; }
-.kpi .v { font: 800 2.4rem/1 var(--f-display); letter-spacing: -0.03em; }
-.kpi .v small { font: 600 0.85rem var(--f-mono); color: var(--muted); letter-spacing: 0; margin-left: 4px; }
-.kpi .l { font-size: 0.88rem; color: var(--muted); }
-@media (max-width: 860px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
-.card { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
-.bar-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: center; }
-.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; padding: 3px; gap: 2px; }
-.seg button { font: 600 0.82rem var(--f-body); color: var(--muted); background: none; border: 0; padding: 6px 12px; border-radius: 999px; cursor: pointer; }
-.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.84rem; color: var(--muted); }
-.legend span { display: inline-flex; align-items: center; gap: 7px; }
-.sw { width: 16px; height: 3px; border-radius: 2px; display: inline-block; }
-.chart { position: relative; }
-.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
-.chart text { font: 11px var(--f-mono); fill: var(--muted); }
-.chart .lab { font: 600 12px var(--f-body); fill: var(--ink); }
-.tip { position: absolute; top: 8px; pointer-events: none; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 8px 10px; font-size: 0.8rem; box-shadow: 0 10px 24px rgb(0 0 0 / 0.14); min-width: 180px; display: grid; gap: 3px; }
-.tip .row { display: flex; justify-content: space-between; gap: 12px; }
-.tip b { font: 600 0.8rem var(--f-mono); }
-.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; }
-.split { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; margin-top: 18px; }
-@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
-.tablewrap { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
-th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-th { font: 600 0.7rem var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-td.n, th.n { text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
-tr.hl td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.pill { font: 600 0.74rem var(--f-mono); padding: 2px 8px; border-radius: 999px; }
-.pill.good { color: var(--keep); background: color-mix(in srgb, var(--keep) 13%, transparent); }
-.pill.bad { color: var(--nuke); background: color-mix(in srgb, var(--nuke) 13%, transparent); }
-.tok { display: grid; gap: 18px; }
-.tok-task { display: grid; gap: 8px; }
-.tok-row { display: grid; grid-template-columns: 96px 1fr 84px; gap: 10px; align-items: center; font-size: 0.86rem; }
-.tok-row .track { height: 16px; background: var(--track); border-radius: 4px; overflow: hidden; }
-.tok-row .track i { display: block; height: 100%; border-radius: 4px; }
-.tok-row .v { font: 600 0.84rem var(--f-mono); text-align: right; }
-.note { font-size: 0.86rem; color: var(--muted); }
-
-/* safety */
-.never { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; list-style: none; margin: 0; padding: 0; }
-.never li { display: flex; gap: 12px; align-items: flex-start; background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; font-size: 0.94rem; }
-.never svg { flex: none; width: 20px; height: 20px; margin-top: 2px; }
-
-/* install */
-.steps { display: grid; gap: 14px; counter-reset: s; max-width: 820px; }
-.step { display: grid; grid-template-columns: 40px 1fr; gap: 16px; align-items: start; }
-.step::before { counter-increment: s; content: counter(s); width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font: 800 1.1rem var(--f-display); background: var(--ink); color: var(--paper); }
-.step > div { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; padding-top: 6px; }
-.step p { color: var(--muted); font-size: 0.95rem; }
-
-/* faq */
-.faq { display: grid; gap: 10px; max-width: 820px; }
-details { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 4px 18px; }
-summary { cursor: pointer; font-weight: 600; padding-block: 14px; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
-summary::-webkit-details-marker { display: none; }
-summary::after { content: "+"; font: 600 1.2rem var(--f-mono); color: var(--muted); }
-details[open] summary::after { content: "–"; }
-details p { color: var(--muted); padding-bottom: 16px; font-size: 0.95rem; }
-
-footer { margin-top: var(--section); border-top: 1px solid var(--rule); padding-block: 36px 48px; color: var(--muted); font-size: 0.86rem; }
-footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; justify-content: space-between; align-items: center; }
-footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
+@media (max-width: 860px) { .steps { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .stats { grid-template-columns: 1fr; gap: 44px; } .links .opt, .plot .end { display: none; } .legend .lv { display: inline; } }
+@media (prefers-reduced-motion: reduce) {
+  .js [data-reveal], .js .hero-in > * { opacity: 1; transform: none; transition: none; animation: none; }
+  .js .plot svg { clip-path: none; transition: none; }
+  .js .plot .end, .js .plot .dotm, .js .ok { opacity: 1; transition: none; }
+  .caret { animation: none; }
+}
 </style>
 </head>
 <body>
-<header class="nav">
+<header class="bar">
   <div class="wrap">
-    <a class="brand" href="#top" aria-label="storage-steward home"><img src="assets/logo.svg" alt="" width="30" height="30">storage-steward</a>
-    <nav aria-label="Main navigation"><ul>
-      <li><a href="#leaks">The problem</a></li><li><a href="#how">How it works</a></li>
-      <li><a href="#rules">Your rules</a></li><li><a href="#bench">Benchmarks</a></li><li><a href="#install">Install</a></li></ul></nav>
-    <a class="gh" href="https://github.com/deaglecodes/storage-steward"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
+    <a class="brand" href="#top" aria-label="storage-steward home"><svg viewBox="0 0 64 64" aria-hidden="true"><rect x="2.5" y="2.5" width="59" height="59" rx="14.5" fill="#0E1A2B" stroke="#FFF" stroke-opacity=".12"/><circle cx="32" cy="32" r="17" fill="none" stroke="#21324B" stroke-width="7"/><path d="M32 15A17 17 0 1 1 16.025 37.814" fill="none" stroke="#E9EFF8" stroke-width="7"/><path d="M12.389 30.758A17 17 0 0 1 24.125 13.997" fill="none" stroke="#4D8DFF" stroke-width="7" stroke-linecap="round"/><circle cx="32" cy="32" r="3.6" fill="#4D8DFF"/></svg>storage-steward</a>
+    <nav class="links" aria-label="Main navigation"><a href="#film">Film</a><a class="opt" href="benchmarks.html">Benchmarks</a><a href="https://github.com/deaglecodes/storage-steward">GitHub</a></nav>
   </div>
 </header>
 
 <main id="top">
   <section class="hero" aria-labelledby="hero-h">
-    <div class="wrap">
-      <div class="hero-copy">
-        <div class="eyebrow">Agent skill · MIT · macOS + Linux · zero dependencies</div>
-        <h1 id="hero-h">Your agents leave files behind. This <em>cleans up</em> as they work.</h1>
-        <p class="lede">storage-steward stops the daily "my Mac is full" cleanup. Background hooks sweep agent leftovers for zero tokens. Caches you still use stay put, and anything that could be yours waits for your OK.</p>
-        <div class="cmd"><code id="cmd-1">git clone https://github.com/deaglecodes/storage-steward &amp;&amp; cd storage-steward &amp;&amp; ./install.sh</code><button class="copy" data-copy="cmd-1">Copy</button></div>
-        <div class="ctas"><a class="btn primary" href="#install">Install in 30 seconds</a><a class="btn" href="benchmarks.html">Read the benchmarks</a></div>
-        <div class="proof"><span><b>79–85%</b> less disk used</span><span><b>0</b> files lost</span><span><b>0</b> tokens per prompt</span></div>
-        <div class="works"><span class="eyebrow">Works with</span><span class="chipset"><i>Claude Code</i><i>Codex</i><i>Cursor</i><i>Gemini CLI</i><i>OpenCode</i><i>Copilot CLI</i><i>any SKILL.md agent</i></span></div>
-      </div>
-      <div class="panel" aria-label="Simulated disk usage replay">
-        <div class="panel-top"><i></i><i></i><i></i><span>df -h  ·  1 TB drive  ·  heavy agent user, simulated</span></div>
-        <div class="df" id="df"></div>
-        <div class="scrub">
-          <div class="scrub-row"><label for="day">Drag through 60 days</label><output id="day-out" for="day">day 60</output></div>
-          <input id="day" type="range" min="1" max="60" value="60" aria-describedby="day-out">
-          <label class="toggle"><input type="checkbox" id="runaway"> include runaway task output (seen in GitHub reports)</label>
-        </div>
-      </div>
+    <div class="mess" aria-hidden="true"></div>
+    <div class="sweep" aria-hidden="true"></div>
+    <div class="wrap hero-in">
+      <h1 class="d less" id="hero-h"><span class="sr">storage-steward: </span>Less<span class="dot">.</span></h1>
+      <p class="lede">Your coding agents leave gigabytes behind. <b>storage-steward</b> sweeps them while you work.</p>
+      <div class="cmd"><code id="cmd">git clone https://github.com/deaglecodes/storage-steward &amp;&amp; ./storage-steward/install.sh</code><button class="copy" type="button" data-copy="cmd">Copy</button></div>
+      <p class="works">Claude Code · Codex · Cursor · Gemini CLI · any SKILL.md agent</p>
+    </div>
+    <div class="wrap status">
+      <output id="left" aria-hidden="true">0 leftovers</output>
+      <div class="meter" aria-hidden="true"><i></i></div>
+      <button class="again" type="button" hidden>↺ make a mess</button>
     </div>
   </section>
 
-  <section class="film" id="film" aria-label="Launch film">
-    <div class="wrap">
-      <figure>
-        <div class="frame"><video controls playsinline preload="metadata" poster="assets/film-poster.jpg">
-          <source src="assets/storage-steward-launch.mp4" type="video/mp4">
-        </video></div>
-        <figcaption><span>The 45-second launch film: install once, and every agent cleans up after itself. Turn the sound on.</span><span>Made in Remotion with the <a href="https://github.com/Rieranthony/product-film-skill">product-film</a> skill, with an original score synthesized in numpy.</span></figcaption>
-      </figure>
+  <section class="blk wrap" id="proof" aria-labelledby="proof-h">
+    <h2 class="tag" id="proof-h">proof</h2>
+    <div class="stats">
+      <div class="stat" data-reveal><b class="d" data-count="79,85" data-suffix="%">79–85%</b><span>less disk</span></div>
+      <div class="stat" data-reveal style="--rd: 0.08s"><b class="d" data-count="72" data-suffix="%">72%</b><span>fewer tokens</span></div>
+      <div class="stat" data-reveal style="--rd: 0.16s"><b class="d">0</b><span>files lost</span></div>
+    </div>
+    <figure class="chart" data-reveal>
+      <div class="legend" aria-hidden="true"><span><i class="k-none"></i>no cleanup <b class="lv">294 GB</b></span><span><i class="k-st"></i>storage-steward <b class="lv">61 GB</b></span></div>
+      <div class="plot" role="img" aria-label="60-day simulation of heavy agent use: with no cleanup, agent leftovers grow to 294 GB; with storage-steward they stay near 61 GB.">
+        <svg viewBox="0 0 1000 400" preserveAspectRatio="none" aria-hidden="true">
+<line class="g" x1="0" x2="1000" y1="25.0" y2="25.0"/><line class="g" x1="0" x2="1000" y1="400" y2="400"/>
+<polyline class="l l-none" points="0.0,390.4 16.9,384.9 33.9,378.4 50.8,373.1 67.8,366.8 84.7,360.8 101.7,354.2 118.6,348.4 135.6,342.0 152.5,336.5 169.5,329.9 186.4,324.5 203.4,316.4 220.3,310.5 237.3,303.6 254.2,297.9 271.2,291.5 288.1,285.6 305.1,279.6 322.0,274.6 339.0,268.2 355.9,262.6 372.9,256.8 389.8,251.1 406.8,243.5 423.7,237.1 440.7,231.2 457.6,226.0 474.6,219.0 491.5,213.8 508.5,207.3 525.4,202.1 542.4,196.1 559.3,190.7 576.3,184.5 593.2,177.5 610.2,169.5 627.1,163.8 644.1,158.1 661.0,152.8 678.0,146.2 694.9,140.8 711.9,134.1 728.8,128.8 745.8,122.5 762.7,116.5 779.7,110.1 796.6,104.5 813.6,96.4 830.5,90.8 847.5,84.4 864.4,78.9 881.4,73.3 898.3,68.0 915.3,61.8 932.2,55.8 949.2,48.9 966.1,43.2 983.1,37.2 1000.0,32.0"/>
+<polyline class="l l-st" points="0.0,390.4 16.9,386.6 33.9,382.1 50.8,382.1 67.8,380.2 84.7,379.0 101.7,377.2 118.6,376.4 135.6,374.6 152.5,374.1 169.5,372.6 186.4,371.9 203.4,368.5 220.3,367.4 237.3,365.8 254.2,364.8 271.2,363.1 288.1,362.4 305.1,361.8 322.0,361.2 339.0,359.2 355.9,357.9 372.9,356.6 389.8,357.2 406.8,355.1 423.7,353.4 440.7,352.5 457.6,351.8 474.6,349.5 491.5,349.5 508.5,347.6 525.4,347.5 542.4,346.0 559.3,345.2 576.3,344.0 593.2,343.6 610.2,341.1 627.1,340.1 644.1,340.5 661.0,339.6 678.0,338.1 694.9,337.4 711.9,335.9 728.8,335.5 745.8,334.1 762.7,333.9 779.7,332.5 796.6,334.0 813.6,331.1 830.5,330.6 847.5,329.0 864.4,328.1 881.4,328.1 898.3,327.4 915.3,326.1 932.2,325.1 949.2,323.2 966.1,322.9 983.1,322.1 1000.0,324.0"/>
+</svg>
+<span class="y" style="top:6.25%" aria-hidden="true">300 GB</span><span class="y" style="top:100%" aria-hidden="true">0</span>
+<span class="dotm l-none" style="top:8.00%"></span><span class="dotm l-st" style="top:81.00%"></span>
+<span class="end" style="top:calc(8.00% + 14px)" aria-hidden="true">no cleanup <b>294 GB</b></span>
+<span class="end" style="top:calc(81.00% - 38px)" aria-hidden="true">storage-steward <b>61 GB</b></span>
+        <div class="hair"></div>
+        <div class="tip" aria-hidden="true"><b></b><span class="l-none"></span><span class="l-st"></span></div>
+      </div>
+      <figcaption class="note">60 days of heavy agent use on a 1 TB drive, simulated. <a class="u" href="benchmarks.html">Benchmarks →</a></figcaption>
+    </figure>
+  </section>
+
+  <section class="blk wrap" id="how" aria-labelledby="how-h">
+    <p class="tag" id="how-h">how</p>
+    <ol class="steps">
+      <li data-reveal><span class="n">01</span><h2 class="d">Install once.</h2><p>One command finds your agents and adds the hooks.</p></li>
+      <li data-reveal style="--rd: 0.08s"><span class="n">02</span><h2 class="d">Forget it.</h2><p>When a session ends, old leftovers are swept in the background. 0 tokens per prompt.</p></li>
+      <li data-reveal style="--rd: 0.16s"><span class="n">03</span><h2 class="d">Keep yours.</h2><p>Caches you use stay. Anything that might be yours waits for your OK.</p></li>
+    </ol>
+  </section>
+
+  <section class="blk wrap rules" id="rules" aria-labelledby="rules-h">
+    <p class="tag">rules</p>
+    <h2 class="d" id="rules-h" data-reveal>Your rules.</h2>
+    <div class="term" data-reveal>
+      <p class="say">“<span id="say">keep ~/models and every .mov</span>”</p>
+      <p class="run"><span class="p">$ </span><span id="run">steward.py config keep ~/models '*.mov'</span><span class="caret" aria-hidden="true"></span></p>
+      <p class="ok" id="ok">✓ saved · the next sweep uses it</p>
     </div>
   </section>
 
-  <section id="leaks" aria-labelledby="leaks-h">
-    <div class="wrap">
-      <div class="sec-head"><div class="eyebrow">The problem</div><h2 id="leaks-h">Where the space goes</h2>
-        <p class="lede">Agents write a lot of disk that nobody cleans up. Each of these comes from a public bug report. Four were closed as not planned and two are still open.</p></div>
-      <div class="bento">
-        <article class="leak hot wide"><div class="big">771<small>GB</small></div><h3>Background task output from one session</h3>
-          <p>Claude Code stores what every background task prints, without a size limit and without ever deleting it. Users report a 1 TB drive filling in minutes.</p>
-          <span class="where">/private/tmp/claude-&lt;uid&gt;/…/tasks/*.output</span><a class="src" href="https://github.com/anthropics/claude-code/issues/46479">anthropics/claude-code#46479</a></article>
-        <article class="leak wide"><div class="big">300<small>MB each</small></div><h3>Desktop-app task sandboxes</h3>
-          <p>Each Claude desktop task copies <code>~/.claude</code> and never removes the copy; one user saw 8 GB an hour. The common <code>rm -rf local_*</code> fix also deletes your Cowork deliverables.</p>
-          <span class="where">~/Library/Application Support/Claude/local-agent-mode-sessions</span><a class="src" href="https://github.com/anthropics/claude-code/issues/92158">anthropics/claude-code#92158</a></article>
-        <article class="leak"><div class="big">100<small>GB+</small></div><h3>Codex session history</h3>
-          <p>Forked sessions copy their parents' full history. Nothing prunes it.</p>
-          <a class="src" href="https://github.com/openai/codex/issues/42648">openai/codex#42648</a></article>
-        <article class="leak"><div class="big">300<small>GB</small></div><h3>Rewind snapshots</h3>
-          <p><code>~/.claude/file-history</code> and debug logs fall outside <code>cleanupPeriodDays</code>.</p>
-          <a class="src" href="https://github.com/anthropics/claude-code/issues/24207">anthropics/claude-code#24207</a></article>
-        <article class="leak"><div class="big">×N<small>node_modules</small></div><h3>One install per worktree</h3>
-          <p>Parallel agents each get a worktree, and each worktree gets its own dependencies.</p></article>
-      </div>
-    </div>
-  </section>
-
-  <section id="how" aria-labelledby="how-h">
-    <div class="wrap">
-      <div class="sec-head"><div class="eyebrow">How it works</div><h2 id="how-h">Three layers, and the agent never waits</h2></div>
-      <div class="layers">
-        <div class="layer"><div class="when">While the agent works</div><h3>Don't make the mess</h3>
-          <ul><li>One scratch folder per task, deleted at the end</li><li>No background output allowed to grow without limit</li><li>Worktree dependencies cloned with APFS <code>cp -c</code> instead of a fresh install</li><li>Free space checked before writing more than 1 GB</li></ul></div>
-        <div class="layer"><div class="when">After every session</div><h3>Hooks sweep for free</h3>
-          <p>Each agent gets hooks in its own format. Claude Code, Codex, Cursor and Gemini CLI start a sweep in the background, at most every 3 hours. Agents without hooks get an OS timer. The prompt check costs 61 ms and prints nothing unless free space drops below max(20 GiB, 5%).</p></div>
-        <div class="layer"><div class="when">When it needs you</div><h3>Ask before it matters</h3>
-          <p>History, old projects and clean worktrees are listed with their sizes. Only the ones you approve are removed. <a href="#rules">Your rules</a> can move anything between "just do it", "ask me" and "never".</p></div>
-      </div>
-      <div class="tiers">
-        <div class="tier"><span class="chip auto">AUTO</span><h3>Swept without asking</h3><p>Idle task output, sandbox plugin copies, old debug logs, stale npx/uv/pip caches, Xcode DerivedData, updater leftovers, $TMPDIR entries older than 7 days.</p></div>
-        <div class="tier"><span class="chip confirm">CONFIRM</span><h3>Needs your OK</h3><p>Transcripts and Codex sessions older than 30 days, clean agent worktrees, <code>node_modules</code> of projects idle 30+ days, old Playwright browsers, Docker build cache.</p></div>
-        <div class="tier"><span class="chip info">INFO</span><h3>Reported, never touched</h3><p>Local models, the Cowork VM image, Codex databases, your Cowork outputs, the Trash.</p></div>
-      </div>
-    </div>
-  </section>
-
-  <section id="rules" aria-labelledby="rules-h">
-    <div class="wrap">
-      <div class="sec-head"><div class="eyebrow">Make it yours</div><h2 id="rules-h">Your rules decide what goes and what stays</h2>
-        <p class="lede">Every rule's tier and age threshold is a default. Switch rules off, sweep sooner or later, protect anything, or add your own folders. Tell your agent in plain English, or run one command.</p></div>
-      <div class="policy">
-        <div class="card" aria-label="Example policy">
-          <div class="prow"><span>Background task output<br><small>claude-task-output</small></span><span class="when">6h</span><span class="chip auto">AUTO</span></div>
-          <div class="prow"><span>Desktop-app sandbox copies<br><small>desktop-sandbox-plugins</small></span><span class="when">3d</span><span class="chip auto">AUTO</span></div>
-          <div class="prow"><span>Old Codex sessions<br><small>codex-sessions</small></span><span class="when">45d</span><span class="chip auto">AUTO</span></div>
-          <div class="prow"><span>Claude transcripts<br><small>claude-transcripts</small></span><span class="when">—</span><span class="chip off">OFF</span></div>
-          <div class="prow"><span>~/work/*/build<br><small>your rule: work-builds</small></span><span class="when">7d</span><span class="chip auto">AUTO</span></div>
-          <div class="prow"><span>~/models, *.mov<br><small>keep list</small></span><span class="when">∞</span><span class="chip keep">KEEP</span></div>
-        </div>
-        <div class="cmds">
-          <p class="say">"never delete my transcripts"</p>
-          <div class="cmd"><code id="cmd-r1">steward.py config set claude-transcripts --tier off</code><button class="copy" data-copy="cmd-r1">Copy</button></div>
-          <p class="say">"clear task output after 6 hours"</p>
-          <div class="cmd"><code id="cmd-r2">steward.py config set claude-task-output --idle 6h</code><button class="copy" data-copy="cmd-r2">Copy</button></div>
-          <p class="say">"don't touch ~/models or any .mov"</p>
-          <div class="cmd"><code id="cmd-r3">steward.py config keep ~/models '*.mov'</code><button class="copy" data-copy="cmd-r3">Copy</button></div>
-          <p class="say">"also clean my build folders weekly"</p>
-          <div class="cmd"><code id="cmd-r4">steward.py config add work-builds --path '~/work/*/build' --idle 7 --tier auto</code><button class="copy" data-copy="cmd-r4">Copy</button></div>
-          <p class="note">Your personal folders (Documents, Desktop, Downloads…) are never swept automatically, even by your own rules; they always ask first.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section aria-labelledby="chance-h">
-    <div class="wrap chance">
-      <div class="copy-col"><div class="eyebrow">No slower builds</div><h2 id="chance-h">Keeps the caches you still use</h2>
-        <p>Deleting caches by age alone breaks things, because tools read caches without writing them, so a package you use every day can look a month old. macOS and Linux update a file's access time only when it is older than its modification time.</p>
-        <p>storage-steward uses that. It sets a stale entry's access time back, and if anything reads the entry, the access time moves forward and the entry is kept. Entries still unread after 7 days are deleted. In the 60-day benchmark this prevented 33–35 re-downloads, for about 2 GB of extra disk.</p></div>
-      <div class="diagram" role="img" aria-label="Second-chance eviction timeline">
-        <svg viewBox="0 0 560 190">
-          <line x1="24" y1="95" x2="300" y2="95" stroke="var(--rule)" stroke-width="2"/>
-          <circle cx="40" cy="95" r="7" fill="var(--ink)"/><text class="t-ink" x="40" y="70" text-anchor="middle">written</text><text x="40" y="122" text-anchor="middle">day 0</text>
-          <circle cx="165" cy="95" r="7" fill="var(--muted)"/><text class="t-ink" x="165" y="70" text-anchor="middle">looks stale</text><text x="165" y="122" text-anchor="middle">idle 14 d</text>
-          <circle cx="290" cy="95" r="9" fill="var(--accent)"/><text class="t-ink" x="290" y="70" text-anchor="middle">armed</text><text x="290" y="122" text-anchor="middle">atime &lt; mtime</text>
-          <path d="M299 91 C 330 60, 345 42, 372 40" fill="none" stroke="var(--nuke)" stroke-width="2" stroke-dasharray="5 4"/>
-          <path d="M299 99 C 330 130, 345 150, 372 152" fill="none" stroke="var(--keep)" stroke-width="2"/>
-          <rect x="374" y="14" width="176" height="52" rx="10" fill="color-mix(in srgb, var(--nuke) 12%, transparent)" stroke="var(--nuke)"/>
-          <text class="t-ink" x="462" y="36" text-anchor="middle">unread for 7 days</text><text x="462" y="55" text-anchor="middle">deleted</text>
-          <rect x="374" y="126" width="176" height="52" rx="10" fill="color-mix(in srgb, var(--keep) 12%, transparent)" stroke="var(--keep)"/>
-          <text class="t-ink" x="462" y="148" text-anchor="middle">read again</text><text x="462" y="167" text-anchor="middle">kept, no re-download</text>
-        </svg>
-      </div>
-    </div>
-  </section>
-
-  <section id="bench" aria-labelledby="bench-h">
-    <div class="wrap">
-      <div class="sec-head"><div class="eyebrow">Benchmarks</div><h2 id="bench-h">60 days of heavy agent use, replayed</h2>
-        <p class="lede">Real files, real skill code, simulated time. Growth rates come from the GitHub reports above and from a real developer Mac. We also ran agents on the same cleanup tasks with and without the skill and compared token use.</p></div>
-      <div class="kpis" id="kpis"></div>
-      <div class="card">
-        <div class="bar-head"><h3>Disk used by agent leftovers</h3>
-          <div class="seg" role="group" aria-label="Scenario"><button id="sc-typical" aria-pressed="true">Typical</button><button id="sc-runaway" aria-pressed="false">With runaway output</button></div></div>
-        <div class="legend" id="legend"></div>
-        <div class="chart" id="chart"></div>
-      </div>
-      <div class="split">
-        <div class="card"><h3>What each approach costs</h3><div class="tablewrap" id="cost"></div>
-          <p class="note">Re-downloads are caches that had to be fetched or rebuilt again. Lost deliverables are files users made in Cowork sessions. Results held across 3 random seeds.</p></div>
-        <div class="card"><h3>Tokens spent on the task</h3><div class="tok" id="tok"></div>
-          <p class="note">Same task, with and without the skill, in disposable sandboxes, 2 runs each. The 103k fixed cost every subagent pays has been subtracted. The skill version passed every check; the version without it passed 96%.</p></div>
-      </div>
-      <p class="note" style="margin-top:16px"><a href="benchmarks.html">Full benchmark report →</a> · <a href="https://github.com/deaglecodes/storage-steward/tree/main/bench">simulator, fixtures and grader</a></p>
-    </div>
-  </section>
-
-  <section aria-labelledby="safe-h">
-    <div class="wrap">
-      <div class="sec-head"><div class="eyebrow">Safety</div><h2 id="safe-h">What it will never do</h2>
-        <p class="lede">These rules are enforced in code at the moment of each delete, whatever a rule or your config says, and unit tests cover every one.</p></div>
-      <ul class="never" id="never"></ul>
-    </div>
-  </section>
-
-  <section id="install" aria-labelledby="install-h">
-    <div class="wrap">
-      <div class="sec-head"><div class="eyebrow">Install</div><h2 id="install-h">Thirty seconds, then forget about it</h2>
-        <p class="lede">You need Python 3.9 or newer and any coding agent. There's nothing else to install.</p></div>
-      <div class="steps">
-        <div class="step"><div><h3>Get the code</h3><div class="cmd"><code id="cmd-2">git clone https://github.com/deaglecodes/storage-steward &amp;&amp; cd storage-steward</code><button class="copy" data-copy="cmd-2">Copy</button></div></div></div>
-        <div class="step"><div><h3>Preview, then install</h3>
-          <div class="cmd"><code id="cmd-3">./install.sh --dry-run</code><button class="copy" data-copy="cmd-3">Copy</button></div>
-          <div class="cmd"><code id="cmd-5">./install.sh</code><button class="copy" data-copy="cmd-5">Copy</button></div>
-          <p>The dry run writes nothing. The install finds your agents and puts one copy of the skill in <code>~/.agents/skills</code>, with symlinks for the others. It backs up each agent's config, adds that agent's hooks and tests them. Add <code>--schedule</code> for agents without hooks. To update, <code>git pull</code> and run it again.</p></div></div>
-        <div class="step"><div><h3>See exactly what it would remove</h3>
-          <div class="cmd"><code id="cmd-4">python3 ~/.agents/skills/storage-steward/scripts/steward.py scan --paths</code><button class="copy" data-copy="cmd-4">Copy</button></div>
-          <p>This is a dry run and changes nothing; drop <code>--paths</code> for a summary. You can also just ask your agent "why is my disk full?" and the skill handles it. To remove everything later, run the same script with <code>uninstall</code>.</p></div></div>
-      </div>
-    </div>
-  </section>
-
-  <section aria-labelledby="faq-h">
-    <div class="wrap">
-      <div class="sec-head"><div class="eyebrow">FAQ</div><h2 id="faq-h">Questions</h2></div>
-      <div class="faq">
-        <details><summary>Will it slow down my prompts?</summary><p>No. The prompt hook takes about 61 ms (mostly Python startup) and prints nothing unless free space is low. The cleanup itself runs in a separate background process after a session stops.</p></details>
-        <details><summary>Which agents does it work with?</summary><p>Any agent that reads <code>SKILL.md</code>. The installer adds native hooks for Claude Code (<code>Stop</code>, <code>SessionEnd</code>), Codex (<code>Stop</code>), Cursor (<code>stop</code>, <code>sessionEnd</code>) and Gemini CLI (<code>AfterAgent</code>, <code>SessionEnd</code>), each in that agent's output format. <code>--schedule</code> adds a launchd, systemd or cron timer for OpenCode, Copilot CLI, Aider or anything else.</p></details>
-        <details><summary>Will it delete my Claude transcripts?</summary><p>Not on its own. Transcripts older than 30 days are a confirm-tier item. If you pass <code>--retention 21</code>, the installer also sets Claude Code's built-in <code>cleanupPeriodDays</code>, which is Claude Code's own deletion. It's off unless you ask, and uninstall reverts it.</p></details>
-        <details><summary>How do I see what it removed, or undo the install?</summary><p><code>steward.py scan --paths</code> lists what a sweep would remove before it runs. Every path it does remove is logged, with its rule and size, to <code>~/.cache/storage-steward/removed.log</code>, and <code>steward.py report</code> shows the total. <code>steward.py uninstall</code> removes the hooks, the skill and the timer, and reverts <code>--retention</code>; <code>--purge</code> also removes your policy and the log.</p></details>
-        <details><summary>Does it run on Linux?</summary><p>Yes. Paths fall back to <code>/tmp</code>, <code>~/.cache</code> and so on. Second-chance eviction relies on <code>relatime</code>, the default on most Linux filesystems. On a <code>noatime</code> mount it detects that and never evicts caches on its own.</p></details>
-      </div>
-    </div>
+  <section class="blk wrap" id="film" aria-labelledby="film-h">
+    <p class="tag" id="film-h">film</p>
+    <button class="play" type="button" data-reveal><span class="tri" aria-hidden="true"></span>Watch the launch film <span class="dur">0:45</span></button>
+    <dialog class="dlg" aria-label="Launch film"><button class="x" type="button" aria-label="Close">×</button><div class="vid"></div></dialog>
   </section>
 </main>
 
-<footer>
-  <div class="wrap">
-    <a class="brand" href="#top"><img src="assets/logo.svg" alt="" width="26" height="26">storage-steward</a>
-    <nav aria-label="Footer"><a href="https://github.com/deaglecodes/storage-steward">GitHub</a><a href="benchmarks.html">Benchmarks</a><a href="https://github.com/deaglecodes/storage-steward/blob/main/LICENSE">MIT License</a><a href="https://github.com/deaglecodes/storage-steward/issues">Report an issue</a></nav>
-  </div>
+<footer class="wrap foot">
+  <p class="d kb" data-reveal><span id="kb">17.6</span><small>KB</small></p>
+  <p class="kb-cap" data-reveal style="--rd: 0.08s">This whole page on a first visit, fonts included. The film loads only if you press play.</p>
+  <div class="fine"><span>storage-steward · MIT</span><nav aria-label="Footer"><a class="u" href="https://github.com/deaglecodes/storage-steward">GitHub</a><a class="u" href="benchmarks.html">Benchmarks</a><a class="u" href="#top">Top ↑</a></nav></div>
 </footer>
 
 <script>
-const SIM = {"series":{"typical":{"none":[7.7,12.1,17.3,21.5,26.6,31.4,36.6,41.3,46.4,50.8,56.1,60.4,66.9,71.6,77.1,81.7,86.8,91.5,96.3,100.3,105.4,109.9,114.6,119.1,125.2,130.3,135.0,139.2,144.8,149.0,154.2,158.3,163.1,167.4,172.4,178.0,184.4,189.0,193.5,197.8,203.0,207.4,212.7,217.0,222.0,226.8,231.9,236.4,242.9,247.4,252.5,256.9,261.4,265.6,270.6,275.4,280.9,285.4,290.2,294.4],"daily-nuke":[1.3,1.5,2.2,2.4,3.1,3.8,4.5,4.7,5.4,5.6,6.8,7.0,7.7,7.9,8.6,9.3,10.0,10.2,10.9,11.1,12.3,12.5,13.2,13.4,14.1,14.7,15.5,15.6,16.4,16.5,17.8,17.9,18.7,18.8,19.6,20.2,21.0,21.1,21.9,22.0,23.3,23.4,24.2,24.3,25.1,25.7,26.5,26.6,27.4,27.5,28.7,28.9,29.6,29.8,30.5,31.2,31.9,32.1,32.8,33.0],"steward":[7.7,10.7,14.3,14.3,15.8,16.8,18.2,18.9,20.3,20.7,21.9,22.5,25.2,26.1,27.4,28.2,29.5,30.1,30.6,31.0,32.6,33.7,34.7,34.2,35.9,37.3,38.0,38.6,40.4,40.4,41.9,42.0,43.2,43.8,44.8,45.1,47.1,47.9,47.6,48.3,49.5,50.1,51.3,51.6,52.7,52.9,54.0,52.8,55.1,55.5,56.8,57.5,57.5,58.1,59.1,59.9,61.4,61.7,62.3,60.8],"steward+weekly":[7.7,10.7,14.3,14.3,15.8,16.8,18.2,18.9,20.3,20.7,21.9,22.5,25.2,24.3,25.6,26.4,27.8,28.3,28.9,29.3,30.3,31.4,32.4,31.8,33.5,35.0,35.7,34.5,36.3,36.3,37.8,37.9,39.1,39.7,38.2,38.5,40.5,41.2,41.0,41.7,42.9,40.6,41.8,42.1,43.2,43.4,44.5,43.3,42.3,42.7,44.0,44.7,44.7,45.3,46.3,42.7,44.1,44.5,45.1,43.6]},"runaway":{"none":[141.1,199.9,204.6,208.7,267.2,272.1,277.0,281.3,286.1,290.6,296.3,300.4,306.7,311.0,316.3,321.0,326.0,330.4,335.7,366.3,371.5,376.1,380.9,385.1,391.4,396.2,401.0,405.0,410.4,414.5,419.8,424.1,482.0,615.4,620.6,626.3,632.6,636.9,642.0,646.1,651.3,655.8,660.7,665.3,670.1,675.0,764.7,769.2,775.4,779.9,785.3,789.6,874.5,878.6,883.6,888.4,984.5,988.9,993.8,998.1],"daily-nuke":[1.3,1.5,2.2,2.4,3.1,3.8,4.5,4.7,5.4,5.6,6.8,7.0,7.7,7.9,8.6,9.3,10.0,10.2,10.9,11.1,12.3,12.5,13.2,13.4,14.1,14.7,15.5,15.6,16.4,16.5,17.8,17.9,18.7,18.8,19.6,20.2,21.0,21.1,21.9,22.0,23.3,23.4,24.2,24.3,25.1,25.7,26.5,26.6,27.4,27.5,28.7,28.9,29.6,29.8,30.5,31.2,31.9,32.1,32.8,33.0],"steward":[141.1,65.0,13.9,14.2,69.3,16.8,17.9,18.5,19.9,20.8,22.2,22.2,25.0,25.6,27.2,28.1,29.4,29.7,31.1,57.5,32.7,33.8,34.7,33.8,36.0,37.0,38.0,38.2,40.1,40.4,41.9,42.2,96.2,172.7,45.0,45.0,47.1,47.3,48.1,48.0,49.4,50.0,50.9,51.8,52.2,53.0,138.4,52.8,54.8,55.4,57.0,57.4,137.8,57.9,59.1,59.9,151.9,61.5,62.4,60.8],"steward+weekly":[141.1,65.0,13.9,14.2,69.3,16.8,17.9,18.5,19.9,20.8,22.2,22.2,25.0,24.4,26.0,26.9,28.2,28.5,29.9,56.4,30.4,31.4,32.4,31.5,33.6,34.6,35.7,33.6,35.4,35.7,37.2,37.5,91.5,168.0,37.8,37.8,39.9,40.1,40.9,40.8,42.2,40.1,40.9,41.8,42.2,43.0,128.5,42.8,41.5,42.1,43.7,44.1,124.5,44.6,45.7,42.8,134.7,44.4,45.3,43.6]}},"cost":{"typical":{"none":{"misses":0,"miss_gb":0.0,"lost":0,"deliv":104},"daily-nuke":{"misses":878,"miss_gb":41.8,"lost":104,"deliv":104},"steward":{"misses":1,"miss_gb":0.0,"lost":0,"deliv":104},"steward+weekly":{"misses":1,"miss_gb":0.0,"lost":0,"deliv":104},"steward-age-only":{"misses":35,"miss_gb":0.9,"lost":0,"deliv":104}},"runaway":{"none":{"misses":0,"miss_gb":0.0,"lost":0,"deliv":91},"daily-nuke":{"misses":910,"miss_gb":42.3,"lost":91,"deliv":91},"steward":{"misses":4,"miss_gb":0.1,"lost":0,"deliv":91},"steward+weekly":{"misses":4,"miss_gb":0.1,"lost":0,"deliv":91},"steward-age-only":{"misses":35,"miss_gb":0.9,"lost":0,"deliv":91}}}};
-const TOK = [{"task": "Free up space now", "with": 26292, "without": 63159, "secs_with": 37.9, "secs_without": 197.1}, {"task": "Make cleanup automatic", "with": 30602, "without": 212837, "secs_with": 95.6, "secs_without": 797.0}];
-const POL = [
-  { k: "none", name: "No cleanup", c: "--none", dash: true },
-  { k: "daily-nuke", name: "Manual daily wipe", c: "--nuke" },
-  { k: "steward", name: "storage-steward", c: "--accent" },
-  { k: "steward+weekly", name: "+ weekly OK", c: "--keep" },
-];
-const fmt = (n, d = 0) => Number(n).toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
-const $ = id => document.getElementById(id);
-const last = a => a[a.length - 1];
+(() => {
+  "use strict";
+  const DATA = {"none":[7.7,12.1,17.3,21.5,26.6,31.4,36.6,41.3,46.4,50.8,56.1,60.4,66.9,71.6,77.1,81.7,86.8,91.5,96.3,100.3,105.4,109.9,114.6,119.1,125.2,130.3,135.0,139.2,144.8,149.0,154.2,158.3,163.1,167.4,172.4,178.0,184.4,189.0,193.5,197.8,203.0,207.4,212.7,217.0,222.0,226.8,231.9,236.4,242.9,247.4,252.5,256.9,261.4,265.6,270.6,275.4,280.9,285.4,290.2,294.4],"steward":[7.7,10.7,14.3,14.3,15.8,16.8,18.2,18.9,20.3,20.7,21.9,22.5,25.2,26.1,27.4,28.2,29.5,30.1,30.6,31.0,32.6,33.7,34.7,34.2,35.9,37.3,38.0,38.6,40.4,40.4,41.9,42.0,43.2,43.8,44.8,45.1,47.1,47.9,47.6,48.3,49.5,50.1,51.3,51.6,52.7,52.9,54.0,52.8,55.1,55.5,56.8,57.5,57.5,58.1,59.1,59.9,61.4,61.7,62.3,60.8]};
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const $ = (s) => document.querySelector(s);
+  const EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-// hero df panel
-function df() {
-  const sc = $("runaway").checked ? "runaway" : "typical", d = +$("day").value - 1, S = SIM.series[sc];
-  $("day-out").textContent = `day ${d + 1}`;
-  $("df").innerHTML = POL.filter(p => p.k !== "steward+weekly").map(p => {
-    const v = S[p.k][d], pct = Math.min(100, v / 10), full = v >= 1000;
-    return `<div class="df-row"><div class="df-label"><span>${p.name}</span><b>${full ? "DISK FULL" : fmt(v) + " GB"}</b></div>
-      <div class="meter" role="img" aria-label="${p.name}: ${fmt(v)} GB of 1 TB"><i style="width:${pct}%;background:var(${p.c})"></i></div></div>`;
-  }).join("");
-}
-$("day").addEventListener("input", df); $("runaway").addEventListener("change", df);
+  /* hero: agents make a mess, the steward sweeps it, and the page deletes its own leftovers */
+  const hero = $(".hero"), mess = $(".mess"), sweep = $(".sweep"), meter = $(".meter"), fill = $(".meter i");
+  const left = $("#left"), again = $(".again"), dot = $(".less .dot");
+  const NAMES = ["tasks/#.output", ".npm/_npx/#", "worktrees/agent-#", "rollout-#.jsonl", "DerivedData/App-#", "file-history/#",
+    "local_#/.claude", ".cache/uv/archive-#", "opencode/snapshot/#", "gemini/tmp/#", "ShipIt/update-#.zip", "debug/#.txt", "node_modules",
+    "tmp.agent#", "projects/#.jsonl", "pnpm/store/v10/#", "pip/http-v2/#", "shell-snapshots/#.sh", "ms-playwright/chromium-#",
+    "codex/sessions/#.jsonl", "cursor/logs/#", "claude-501/#", "Homebrew/downloads/#", ".venv", "buildx/cache/#"];
+  const FLOOD = 1250, HOLD = 450, SWEEP = 1500, ROW = 21, PAD = 14;
+  let running = false;
 
-// kpis
-function kpis() {
-  const t = SIM.series.typical, base = last(t.none);
-  const saved = k => Math.round(100 * (1 - last(t[k]) / base));
-  const c = SIM.cost.typical, cut = TOK ? Math.round(100 * TOK.reduce((s, x) => s + (1 - x.with / x.without), 0) / TOK.length) : null;
-  $("kpis").innerHTML = [
-    [`${saved("steward+weekly")}%`, `less disk used by day 60 (${saved("steward")}% with hooks alone)`],
-    [`${c.steward.lost}<small>vs ${c["daily-nuke"].lost}</small>`, "deliverables lost, compared with a manual daily wipe"],
-    [`${c.steward.misses}<small>vs ${c["daily-nuke"].misses}</small>`, "cache re-downloads, compared with a manual daily wipe"],
-    cut !== null ? [`${cut}%`, "fewer tokens when an agent does the cleanup"] : ["0", "tokens per prompt"],
-  ].map(([v, l]) => `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join("");
-}
+  function rng(seed) {
+    return () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function junk(r) {
+    const hex = Math.floor(r() * 0xffff).toString(16).padStart(4, "0");
+    const size = r() < 0.22 ? `${(0.3 + r() * 20).toFixed(1)} GB` : `${Math.round(2 + r() * 900)} MB`;
+    return `${NAMES[Math.floor(r() * NAMES.length)].replace("#", hex)}  ${size}`;
+  }
+  function keepOut(box) {
+    return [...document.querySelectorAll(".bar .wrap > *, .hero-in > *, .status")].map((el) => {
+      const b = el.getBoundingClientRect();
+      return { l: b.left - box.left - PAD, r: b.right - box.left + PAD, t: b.top - box.top - PAD, b: b.bottom - box.top + PAD };
+    });
+  }
+  function layout(r) {
+    const box = hero.getBoundingClientRect(), blocked = keepOut(box);
+    const probe = mess.appendChild(document.createElement("span"));
+    probe.textContent = "0".repeat(40);
+    const cw = probe.getBoundingClientRect().width / 40;
+    probe.remove();
+    const items = [];
+    for (let y = 10; y < box.height - ROW; y += ROW) {
+      for (let x = 8 + r() * 64; x < box.width - 40;) {
+        const text = junk(r), w = text.length * cw;
+        if (x + w > box.width - 8) break;
+        if (!blocked.some((k) => x < k.r && x + w > k.l && y < k.b && y + ROW > k.t)) items.push({ x, y, w, text });
+        x += w + 16 + r() * 44;
+      }
+    }
+    return { items, width: box.width };
+  }
+  const passed = (sorted, t) => { let lo = 0, hi = sorted.length; while (lo < hi) { const m = (lo + hi) >> 1; if (sorted[m] <= t) lo = m + 1; else hi = m; } return lo; };
 
-// chart
-let scenario = "typical";
-function chart() {
-  const S = SIM.series[scenario], n = S.none.length;
-  const W = 760, H = 320, L = 52, R = 150, T = 12, B = 28;
-  const max = Math.max(...POL.map(p => Math.max(...S[p.k])));
-  const step = max > 600 ? 200 : 50, top = Math.ceil(max / step) * step;
-  const x = d => L + d / (n - 1) * (W - L - R), y = v => T + (1 - v / top) * (H - T - B);
-  let g = "";
-  for (let v = 0; v <= top; v += step) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--rule)"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v >= 1000 ? "1 TB" : v + " GB"}</text>`;
-  [1, 15, 30, 45, 60].forEach(d => g += `<text x="${x(d - 1)}" y="${H - 6}" text-anchor="middle">day ${d}</text>`);
-  const ends = [];
-  POL.forEach(p => { g += `<polyline points="${S[p.k].map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ")}" fill="none" stroke="var(${p.c})" stroke-width="2.25" stroke-linejoin="round"${p.dash ? ' stroke-dasharray="5 4"' : ""}/>`; ends.push([last(S[p.k]), p]); });
-  ends.sort((a, b) => b[0] - a[0]); let ly = -1e9;
-  ends.forEach(([v, p]) => { const yy = Math.max(y(v) + 4, ly + 16); ly = yy;
-    g += `<circle cx="${x(n - 1)}" cy="${y(v)}" r="3.5" fill="var(${p.c})" stroke="var(--surface)" stroke-width="2"/><text class="lab" x="${x(n - 1) + 10}" y="${yy}">${p.name} · ${fmt(v)} GB</text>`; });
-  g += `<line id="cross" y1="${T}" y2="${H - B}" stroke="var(--muted)" visibility="hidden"/><rect id="hit" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent"/>`;
-  const box = $("chart");
-  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Disk used per approach over 60 days">${g}</svg><div class="tip" hidden></div>`;
-  const svg = box.querySelector("svg"), tip = box.querySelector(".tip"), cross = svg.querySelector("#cross"), hit = svg.querySelector("#hit");
-  hit.addEventListener("pointermove", ev => {
-    const r = svg.getBoundingClientRect(), d = Math.max(0, Math.min(n - 1, Math.round(((ev.clientX - r.left) * W / r.width - L) / (W - L - R) * (n - 1))));
-    cross.setAttribute("x1", x(d)); cross.setAttribute("x2", x(d)); cross.setAttribute("visibility", "visible");
-    tip.innerHTML = `<div class="eyebrow">day ${d + 1}</div>` + POL.map(p => `<div class="row"><span><i class="dot" style="background:var(${p.c})"></i>${p.name}</span><b>${fmt(S[p.k][d], 1)} GB</b></div>`).join("");
-    tip.hidden = false; tip.style.left = Math.min(Math.max(0, x(d) / W * r.width + 14), r.width - tip.offsetWidth) + "px";
+  function play() {
+    if (running) return;
+    running = true;
+    again.hidden = true;
+    const r = rng((Math.random() * 2 ** 31) | 0);
+    const { items, width } = layout(r);
+    const span = width + 80, ins = [], outs = [];
+    const frag = document.createDocumentFragment();
+    for (const it of items) {
+      const el = frag.appendChild(document.createElement("span"));
+      el.textContent = it.text;
+      el.style.cssText = `left:${it.x}px;top:${it.y}px`;
+      const din = 100 + FLOOD * Math.pow(r(), 0.75);
+      const dout = FLOOD + HOLD + SWEEP * (it.x + 40) / span, wipe = Math.max(50, SWEEP * it.w / span);
+      el.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 320, delay: din, easing: EASE, fill: "backwards" });
+      el.animate([{ clipPath: "inset(0 0 0 0)" }, { clipPath: "inset(0 0 0 100%)" }], { duration: wipe, delay: dout, easing: "linear", fill: "forwards" });
+      ins.push(din);
+      outs.push(dout + wipe / 2);
+    }
+    mess.replaceChildren(frag);
+    sweep.animate([{ opacity: 1, transform: "translateX(-40px)" }, { opacity: 1, transform: `translateX(${width + 40}px)` }],
+      { duration: SWEEP, delay: FLOOD + HOLD, easing: "linear" });
+    ins.sort((a, b) => a - b);
+    outs.sort((a, b) => a - b);
+    const t0 = performance.now(), end = FLOOD + HOLD + SWEEP + 120, total = items.length || 1;
+    const tick = (now) => {
+      const t = now - t0, n = passed(ins, t) - passed(outs, t);
+      left.textContent = plural(n, "leftover");
+      fill.style.transform = `scaleX(${0.04 + 0.93 * n / total})`;
+      meter.classList.toggle("full", n / total > 0.5);
+      if (t < end) requestAnimationFrame(tick); else done();
+    };
+    requestAnimationFrame(tick);
+  }
+  function done() {
+    mess.replaceChildren();
+    left.textContent = plural(0, "leftover");
+    fill.style.transform = "scaleX(0.04)";
+    meter.classList.remove("full");
+    dot.animate([{ transform: "scale(1)" }, { transform: "scale(1.7)" }, { transform: "scale(1)" }], { duration: 700, easing: EASE });
+    again.hidden = false;
+    running = false;
+  }
+  if (!reduce) {
+    again.addEventListener("click", play);
+    const start = () => (hero.getBoundingClientRect().bottom > 0 ? play() : (again.hidden = false));
+    Promise.race([document.fonts.ready, new Promise((res) => setTimeout(res, 1200))]).then(start);
+  }
+
+  /* numbers count up when they come into view */
+  function countUp(el, to, decimals = 0) {
+    const t0 = performance.now(), dur = 1400, suffix = el.dataset.suffix || "";
+    const step = (now) => {
+      const u = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - u, 4);
+      el.textContent = to.map((v) => (v * e).toFixed(decimals)).join("–") + suffix;
+      if (u < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  /* the chart: draws itself, then shows any day under the pointer */
+  const plot = $(".plot"), hair = $(".hair"), tip = $(".tip");
+  if (plot && DATA) {
+    const [day, none, st] = tip.children, last = DATA.none.length - 1;
+    const show = (ev) => {
+      const b = plot.getBoundingClientRect();
+      const i = Math.round(Math.min(1, Math.max(0, (ev.clientX - b.left) / b.width)) * last), x = (i / last) * 100;
+      hair.style.left = `${x}%`;
+      tip.style.left = `clamp(96px, ${x}%, calc(100% - 96px))`;
+      day.textContent = `day ${i + 1}`;
+      none.textContent = `no cleanup ${Math.round(DATA.none[i])} GB`;
+      st.textContent = `storage-steward ${Math.round(DATA.steward[i])} GB`;
+      plot.classList.add("hov");
+    };
+    plot.addEventListener("pointermove", show);
+    plot.addEventListener("pointerdown", show);
+    plot.addEventListener("pointerleave", () => plot.classList.remove("hov"));
+  }
+
+  /* rules: plain English in, one config command out */
+  const ASKS = [
+    ["keep ~/models and every .mov", "steward.py config keep ~/models '*.mov'"],
+    ["never delete my transcripts", "steward.py config set claude-transcripts --tier off"],
+    ["clean ~/work/*/build after a week", "steward.py config add work-builds --path '~/work/*/build' --idle 7 --tier auto"],
+    ["sweep task output after 6 hours", "steward.py config set claude-task-output --idle 6h"],
+  ];
+  const say = $("#say"), run = $("#run"), ok = $("#ok");
+  let rulesVisible = false;
+  const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+  async function type(el, text, ms) { for (let i = 1; i <= text.length; i++) { el.textContent = text.slice(0, i); await wait(ms); } }
+  async function rules() {
+    for (let k = 1; ; k++) {
+      while (!rulesVisible) await wait(300);
+      await wait(2400);
+      ok.classList.remove("on");
+      await wait(350);
+      const [s, c] = ASKS[k % ASKS.length];
+      say.textContent = "";
+      run.textContent = "";
+      await type(say, s, 32);
+      await wait(260);
+      await type(run, c, 13);
+      await wait(180);
+      ok.classList.add("on");
+    }
+  }
+  if (!reduce) { ok.classList.add("on"); rules(); }
+
+  /* the last number: what a first visit downloads, measured when the site is built */
+  const kb = $("#kb"), weight = Number(kb.textContent);
+
+  /* reveal on scroll */
+  const onReveal = (el) => {
+    el.querySelectorAll("[data-count]").forEach((n) => !reduce && countUp(n, n.dataset.count.split(",").map(Number)));
+    if (el.classList.contains("chart")) plot.classList.add("drawn");
+    if (el.classList.contains("term")) rulesVisible = true;
+    if (el.classList.contains("kb") && !reduce) countUp(kb, [weight], 1);
+  };
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      e.target.classList.add("in");
+      io.unobserve(e.target);
+      onReveal(e.target);
+    }
+  }, { rootMargin: "0px 0px -10% 0px" });
+  document.querySelectorAll("[data-reveal]").forEach((el) => io.observe(el));
+
+  /* copy the install command */
+  document.addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("[data-copy]");
+    if (!btn) return;
+    const code = document.getElementById(btn.dataset.copy);
+    try {
+      await navigator.clipboard.writeText(code.textContent.trim());
+      btn.textContent = "Copied";
+    } catch {
+      getSelection().selectAllChildren(code);
+      btn.textContent = "Press ⌘C";
+    }
+    setTimeout(() => { btn.textContent = "Copy"; }, 1600);
   });
-  hit.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
-}
-$("legend").innerHTML = POL.map(p => `<span><i class="sw" style="${p.dash ? "background:repeating-linear-gradient(90deg,var(--none) 0 5px,transparent 5px 8px)" : `background:var(${p.c})`}"></i>${p.name}</span>`).join("");
-function setSc(s) { scenario = s; $("sc-typical").setAttribute("aria-pressed", s === "typical"); $("sc-runaway").setAttribute("aria-pressed", s === "runaway"); chart(); }
-$("sc-typical").addEventListener("click", () => setSc("typical")); $("sc-runaway").addEventListener("click", () => setSc("runaway"));
 
-function cost() {
-  const t = SIM.series.typical, c = SIM.cost.typical, base = last(t.none);
-  $("cost").innerHTML = `<table><thead><tr><th>Approach</th><th class="n">Day 60</th><th class="n">Saved</th><th class="n">Re-downloads</th><th class="n">Lost</th></tr></thead><tbody>` +
-    POL.map(p => `<tr class="${p.k.startsWith("steward") ? "hl" : ""}"><td><i class="dot" style="background:var(${p.c})"></i>${p.name}</td><td class="n">${fmt(last(t[p.k]))} GB</td>
-      <td class="n">${p.k === "none" ? "—" : Math.round(100 * (1 - last(t[p.k]) / base)) + "%"}</td><td class="n">${c[p.k].misses} <span style="color:var(--muted)">(${fmt(c[p.k].miss_gb, 1)} GB)</span></td>
-      <td class="n"><span class="pill ${c[p.k].lost ? "bad" : "good"}">${c[p.k].lost}/${c[p.k].deliv}</span></td></tr>`).join("") + "</tbody></table>";
-}
-
-function tok() {
-  if (!TOK) return;
-  const max = Math.max(...TOK.map(x => x.without));
-  $("tok").innerHTML = TOK.map(x => `<div class="tok-task"><h3 style="font-size:1rem">${x.task}</h3>
-    <div class="tok-row"><span>With skill</span><div class="track"><i style="width:${100 * x.with / max}%;background:var(--accent)"></i></div><span class="v">${fmt(x.with / 1000, 1)}k</span></div>
-    <div class="tok-row"><span>Without</span><div class="track"><i style="width:${100 * x.without / max}%;background:var(--nuke)"></i></div><span class="v">${fmt(x.without / 1000, 1)}k</span></div>
-    <div class="note">${Math.round(100 * (1 - x.with / x.without))}% fewer tokens · ${fmt(x.secs_with)} s vs ${fmt(x.secs_without)} s</div></div>`).join("");
-}
-
-const CHECK = `<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="none" stroke="var(--keep)" stroke-width="1.6"/><path d="M6 10.4l2.6 2.6L14 7.6" fill="none" stroke="var(--keep)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-$("never").innerHTML = ["Empty your Trash, which is a permanent delete you should make yourself", "Sweep Documents, Desktop or Downloads on its own", "Touch the running session, or anything written in the last hour",
-  "Remove a worktree unless git shows nothing would be lost", "Reach outside its folder, by symlink or any other spelling",
-  "Delete your Cowork outputs or uploads", "Remove a cache that's still being read",
-  "Delete anything while your config file can't be read"].map(t => `<li>${CHECK}<span>${t}</span></li>`).join("");
-
-document.querySelectorAll(".copy").forEach(b => b.addEventListener("click", async () => {
-  const text = $(b.dataset.copy).textContent;
-  try { await navigator.clipboard.writeText(text); b.textContent = "Copied"; }
-  catch { const r = document.createRange(); r.selectNodeContents($(b.dataset.copy)); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = "Selected"; }
-  setTimeout(() => b.textContent = "Copy", 1600);
-}));
-
-df(); kpis(); chart(); cost(); tok();
+  /* the film loads only when asked for */
+  const dlg = $(".dlg"), vid = $(".vid");
+  $(".play").addEventListener("click", () => {
+    const v = document.createElement("video");
+    Object.assign(v, { src: "assets/storage-steward-launch.mp4", controls: true, autoplay: true, playsInline: true });
+    vid.replaceChildren(v);
+    dlg.showModal();
+  });
+  const stopFilm = () => vid.replaceChildren();          // unload the video, don't just hide it
+  const closeFilm = () => { stopFilm(); dlg.close(); };
+  dlg.addEventListener("cancel", stopFilm);
+  dlg.addEventListener("close", stopFilm);
+  dlg.addEventListener("click", (ev) => { if (ev.target === dlg) closeFilm(); });
+  $(".x").addEventListener("click", closeFilm);
+})();
 </script>
 </body>
 </html>
