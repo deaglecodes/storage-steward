@@ -13,17 +13,19 @@ or $STORAGE_STEWARD_CONFIG. Every key is optional:
   }
 
 Tiers: auto (hooks sweep it), confirm (ask first), info (report only), off (ignore the rule).
-A broken file never breaks a hook: the steward falls back to defaults and reports the problem.
+A broken file never breaks a hook, and it fails closed: if the file or its keep list can't be read,
+deletes pause until it is fixed (scan says why); a rule whose override has a typo is switched off.
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from rules import BUILTIN, RULES, Rule, check_custom, custom_rule
+from rules import BUILTIN, RULES, KeepList, Rule, check_custom, custom_rule, positive_days
 
 TIERS = ("auto", "confirm", "info", "off")
 NUMBERS = {"sweep_every_hours": (0.25, 24 * 30), "warn_below_gb": (0, 10000),
@@ -39,76 +41,128 @@ def path_for(home: Path, real_home: bool) -> Path:
 
 
 def parse_days(text: str) -> float:
-    """'14', '14d', '6h', '0.5' -> days."""
+    """'14', '14d', '6h', '0.5' -> days; ValueError unless finite and above zero."""
     t = str(text).strip().lower()
     if t.endswith("h"):
-        return float(t[:-1]) / 24
+        return positive_days(float(t[:-1]) / 24)
     if t.endswith("d"):
         t = t[:-1]
-    return float(t)
+    return positive_days(t)
 
 
 class Policy:
-    """The effective policy: built-in rules, the user's overrides, keep list and custom rules."""
+    """The effective policy: built-in rules, the user's overrides, keep list and custom rules.
+
+    Never raises. `paused` is set (deletes stop) when the user's intent can't be read safely.
+    """
 
     def __init__(self, home: Path, real_home: bool):
         self.home, self.path = home, path_for(home, real_home)
         self.raw: dict = {}
         self.errors: List[str] = []
-        if self.path.exists():
-            try:
-                data = json.loads(self.path.read_text() or "{}")
-                self.raw = data if isinstance(data, dict) else {}
-                if not isinstance(data, dict):
-                    self.errors.append("config root must be a JSON object")
-            except (OSError, ValueError) as e:
-                self.errors.append(f"config ignored ({e.__class__.__name__}: {e})")
+        self.paused = ""
         self.overrides: Dict[str, dict] = {}
-        for rid, ov in (self.raw.get("rules") or {}).items():
-            if not isinstance(ov, dict):
-                self.errors.append(f"rules.{rid}: must be an object")
-                continue
-            if rid not in BUILTIN and not any(c.get("name") == rid for c in self._custom_specs()):
-                self.errors.append(f"rules.{rid}: no such rule")
-                continue
-            clean = {}
-            if "tier" in ov:
-                if ov["tier"] in TIERS:
-                    clean["tier"] = ov["tier"]
-                else:
-                    self.errors.append(f"rules.{rid}.tier: use one of {', '.join(TIERS)}")
-            if "idle_days" in ov:
-                try:
-                    d = float(ov["idle_days"])
-                    if d <= 0:
-                        raise ValueError
-                    clean["idle_days"] = d
-                except (TypeError, ValueError):
-                    self.errors.append(f"rules.{rid}.idle_days: must be a positive number")
-            self.overrides[rid] = clean
-        keep = self.raw.get("keep") or []
-        self.keep: List[str] = [k for k in keep if isinstance(k, str)] if isinstance(keep, list) else []
+        self.keep: List[str] = []
         self.custom: List[Rule] = []
-        for spec in self._custom_specs():
-            problems = check_custom(home, spec)
+        self.numbers = dict(DEFAULTS)
+        self.keeper = KeepList(home, [])
+        try:
+            self._load()
+            self.keeper = KeepList(home, self.keep)
+            self.errors.extend(self.keeper.problems)
+            if self.keeper.broken:
+                self._pause("keep: an entry can't be read, so it can't protect anything")
+        except Exception as e:      # a config shape nobody anticipated: stop deleting, keep working
+            self._pause(f"config not understood ({e.__class__.__name__}: {e})")
+
+    def _pause(self, why: str):
+        self.errors.append(why)
+        self.paused = self.paused or why
+
+    def _load(self):
+        try:
+            text = self.path.read_text()
+        except (FileNotFoundError, NotADirectoryError):
+            return                  # no config: built-in defaults
+        except OSError as e:        # it may exist but can't be read (permissions): its keep list would be lost
+            return self._pause(f"config can't be read ({e.__class__.__name__}: {e})")
+        try:
+            data = json.loads(text or "{}")
+        except ValueError as e:
+            return self._pause(f"config can't be read ({e.__class__.__name__}: {e})")
+        if not isinstance(data, dict):
+            return self._pause("config root must be a JSON object")
+        self.raw = data
+        self._load_keep(data.get("keep"))
+        rules = data.get("rules") or {}
+        if not isinstance(rules, dict):
+            self._pause("rules: must be an object of rule-name: settings")
+            rules = {}
+        customs = self._custom_specs()
+        for spec in customs:
+            problems = check_custom(self.home, spec)
             if problems:
                 self.errors.extend(problems)
-            else:
-                self.custom.append(custom_rule(home, spec))
-        self.numbers = dict(DEFAULTS)
+                continue
+            try:
+                self.custom.append(custom_rule(self.home, spec))
+            except (TypeError, ValueError) as e:
+                self.errors.append(f"custom rule {spec.get('name')!r}: {e}")
+        known = set(BUILTIN) | {r.id for r in self.custom}
+        for rid, ov in rules.items():
+            if rid not in known:
+                self.errors.append(f"rules.{rid}: no such rule")
+                continue
+            self.overrides[rid] = self._override(rid, ov)
         for key, (lo, hi) in NUMBERS.items():
-            if key in self.raw:
+            if key in data:
                 try:
-                    v = float(self.raw[key])
-                    if not lo <= v <= hi:
+                    v = float(data[key])
+                    if not (math.isfinite(v) and lo <= v <= hi):
                         raise ValueError
                     self.numbers[key] = v
                 except (TypeError, ValueError):
                     self.errors.append(f"{key}: must be a number between {lo} and {hi}")
 
+    def _load_keep(self, keep):
+        if keep is None:
+            return
+        if isinstance(keep, str):
+            self.errors.append("keep: should be a list; read as one entry")
+            keep = [keep]
+        if not isinstance(keep, list) or not all(isinstance(k, str) for k in keep):
+            return self._pause("keep: must be a list of paths or patterns")
+        self.keep = keep
+
+    def _override(self, rid: str, ov) -> dict:
+        """One rule's settings. Anything unreadable switches the rule off rather than back to its default."""
+        if not isinstance(ov, dict):
+            self.errors.append(f"rules.{rid}: must be an object; rule off until fixed")
+            return {"tier": "off"}
+        clean = {}
+        if "tier" in ov:
+            if ov["tier"] in TIERS:
+                clean["tier"] = ov["tier"]
+            else:
+                self.errors.append(f"rules.{rid}.tier: use one of {', '.join(TIERS)}; rule off until fixed")
+                return {"tier": "off"}
+        if "idle_days" in ov:
+            try:
+                clean["idle_days"] = positive_days(ov["idle_days"])
+            except (TypeError, ValueError):
+                self.errors.append(f"rules.{rid}.idle_days: must be a positive number; rule off until fixed")
+                return {"tier": "off"}
+        return clean
+
     def _custom_specs(self) -> List[dict]:
         c = self.raw.get("custom") or []
-        return [x for x in c if isinstance(x, dict)] if isinstance(c, list) else []
+        if not isinstance(c, list):
+            self.errors.append("custom: must be a list of rules")
+            return []
+        bad = [x for x in c if not isinstance(x, dict)]
+        if bad:
+            self.errors.append("custom: every rule must be an object")
+        return [x for x in c if isinstance(x, dict)]
 
     def effective(self) -> List[Tuple[Rule, str, Optional[float], bool]]:
         """(rule, tier, idle_days, overridden) for every rule, built-in first, then the user's own."""
@@ -116,8 +170,8 @@ class Policy:
         for r in RULES + self.custom:
             ov = self.overrides.get(r.id, {})
             tier = ov.get("tier", r.tier)
-            if r.custom and tier == "auto" and r.tier == "confirm":
-                tier = "confirm"        # custom rules inside Documents/Desktop/... stay ask-first
+            if r.capped and tier == "auto":
+                tier = "confirm"        # rules reaching into Documents/Desktop/... stay ask-first
             days = ov.get("idle_days", r.days) if r.days is not None else None
             out.append((r, tier, days, bool(ov)))
         return out
@@ -132,7 +186,26 @@ def _load_raw(path: Path) -> dict:
         data = json.loads(path.read_text() or "{}")
     except ValueError:
         raise SystemExit(f"refusing: {path} is not valid JSON; fix or move it first")
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        raise SystemExit(f"refusing: {path} must hold a JSON object; fix or move it first")
+    return data
+
+
+def _section(data: dict, key: str, kind: type):
+    value = data.setdefault(key, kind())
+    if isinstance(value, str) and kind is list:          # "keep": "~/x" -> ["~/x"]
+        value = data[key] = [value]
+    if not isinstance(value, kind):
+        raise SystemExit(f"refusing: '{key}' in the config must be a {'list' if kind is list else 'object'}; "
+                         "fix it by hand first (steward.py config show)")
+    return value
+
+
+def _days(text: str) -> float:
+    try:
+        return round(parse_days(text), 4)
+    except ValueError:
+        raise SystemExit(f"--idle {text!r}: use a positive number of days or hours, e.g. 14, 14d or 6h")
 
 
 def _save_raw(path: Path, data: dict):
@@ -147,19 +220,23 @@ def _save_raw(path: Path, data: dict):
 def edit(home: Path, real_home: bool, a) -> str:
     """Apply one `config` action and return a one-line summary."""
     path = path_for(home, real_home)
-    data = _load_raw(path)
-    customs = data.setdefault("custom", [])
-    names = set(BUILTIN) | {c.get("name") for c in customs if isinstance(c, dict)}
     act = a.action
     if act == "show":
         pol = Policy(home, real_home)
-        body = json.dumps(pol.raw, indent=1) if pol.raw else "(no config yet: built-in defaults)"
+        try:
+            body = path.read_text() if path.exists() else "(no config yet: built-in defaults)"
+        except OSError as e:
+            body = f"(can't read: {e})"
         errs = "".join(f"\nproblem: {e}" for e in pol.errors)
-        return f"{path}\n{body}{errs}"
+        paused = f"\ndeletes paused until this is fixed: {pol.paused}" if pol.paused else ""
+        return f"{path}\n{body.rstrip()}{errs}{paused}"
+    data = _load_raw(path)
+    customs = _section(data, "custom", list)
+    names = set(BUILTIN) | {c.get("name") for c in customs if isinstance(c, dict)}
     if act in ("set", "unset"):
         if a.rule not in names:
             raise SystemExit(f"unknown rule {a.rule!r}; see `steward.py rules`")
-        rules = data.setdefault("rules", {})
+        rules = _section(data, "rules", dict)
         if act == "unset":
             rules.pop(a.rule, None)
             msg = f"{a.rule}: back to defaults"
@@ -167,18 +244,17 @@ def edit(home: Path, real_home: bool, a) -> str:
             if a.tier is None and a.idle is None:
                 raise SystemExit("set needs --tier and/or --idle")
             ov = rules.setdefault(a.rule, {})
+            if not isinstance(ov, dict):
+                ov = rules[a.rule] = {}
             if a.tier is not None:
                 if a.tier not in TIERS:
                     raise SystemExit(f"--tier must be one of {', '.join(TIERS)}")
                 ov["tier"] = a.tier
             if a.idle is not None:
-                d = parse_days(a.idle)
-                if d <= 0:
-                    raise SystemExit("--idle must be positive (e.g. 14, 14d, 6h)")
-                ov["idle_days"] = round(d, 4)
+                ov["idle_days"] = _days(a.idle)
             msg = f"{a.rule}: " + ", ".join(f"{k}={v}" for k, v in ov.items())
     elif act in ("keep", "unkeep"):
-        keep = data.setdefault("keep", [])
+        keep = _section(data, "keep", list)
         for p in a.paths:
             if act == "keep" and p not in keep:
                 keep.append(p)
@@ -186,20 +262,21 @@ def edit(home: Path, real_home: bool, a) -> str:
                 keep.remove(p)
         msg = f"keep list: {', '.join(keep) or '(empty)'}"
     elif act == "add":
-        spec = {"name": a.name, "paths": a.path, "idle_days": round(parse_days(a.idle), 4), "tier": a.tier}
+        spec = {"name": a.name, "paths": a.path, "idle_days": _days(a.idle), "tier": a.tier}
         if a.label:
             spec["label"] = a.label
         problems = check_custom(home, spec)
         if problems:
             raise SystemExit("refusing: " + "; ".join(problems))
-        customs[:] = [c for c in customs if c.get("name") != a.name] + [spec]
+        customs[:] = [c for c in customs if not (isinstance(c, dict) and c.get("name") == a.name)] + [spec]
         r = custom_rule(home, spec)
         capped = " (capped to confirm: inside a personal folder)" if r.tier != a.tier else ""
         msg = f"added rule {a.name}: {', '.join(a.path)} idle {spec['idle_days']}d tier {r.tier}{capped}"
     elif act == "drop":
         before = len(customs)
-        customs[:] = [c for c in customs if c.get("name") != a.name]
-        (data.get("rules") or {}).pop(a.name, None)
+        customs[:] = [c for c in customs if not (isinstance(c, dict) and c.get("name") == a.name)]
+        if isinstance(data.get("rules"), dict):
+            data["rules"].pop(a.name, None)
         if len(customs) == before:
             raise SystemExit(f"no custom rule named {a.name!r}")
         msg = f"dropped rule {a.name}"

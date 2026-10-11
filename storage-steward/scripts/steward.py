@@ -32,7 +32,10 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import agents  # noqa: E402
 import policy  # noqa: E402
-from rules import DAY, GIB, HOUR, Item, kept  # noqa: E402
+import rules  # noqa: E402
+from rules import DAY, GIB, HOUR, Item  # noqa: E402
+
+__version__ = "0.2.0"
 
 LOW_FREE_BYTES = 20 * GIB          # default: warn below this ... (config: warn_below_gb)
 LOW_FREE_FRACTION = 0.05           # ... or below this fraction free (config: warn_below_percent)
@@ -42,10 +45,19 @@ PROBATION = 7 * DAY                # default second-chance probation (config: pr
 SWEEP_INTERVAL = 3 * HOUR          # default hook sweep interval (config: sweep_every_hours)
 WARN_INTERVAL = 6 * HOUR           # low-disk warning at most this often per session
 SENTINELS = 64                     # files armed per cache entry
+REMOVED_LOG_MAX = 1 << 20          # removed.log keeps roughly the newest 1 MB of entries
 MARK = "storage-steward"           # state dir name (~/.cache/storage-steward)
 NEVER = ("", "Documents", "Desktop", "Downloads", "Pictures", "Movies", "Music", "Library",
          ".ssh", ".gnupg", ".claude", ".claude/settings.json", ".claude.json", ".claude/memory",
          ".claude/skills", ".claude/plugins", ".codex", ".codex/auth.json", ".codex/config.toml")
+# never deleted, and nothing inside them either, whatever a rule (even one the user wrote) says:
+# credentials, agent settings and instructions, memory, skills, and this tool's own policy
+NEVER_TREE = (".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker/config.json", ".netrc", ".password-store",
+              ".config/gh", ".config/gcloud", "Library/Keychains", ".config/storage-steward", ".agents/skills",
+              ".claude.json", ".claude/settings.json", ".claude/settings.local.json", ".claude/CLAUDE.md",
+              ".claude/memory", ".claude/skills", ".claude/plugins", ".claude/agents", ".claude/commands",
+              ".claude/hooks", ".claude/rules", ".codex/auth.json", ".codex/config.toml", ".codex/AGENTS.md",
+              ".codex/rules", ".gemini/settings.json", ".gemini/GEMINI.md", ".cursor/rules", ".cursor/mcp.json")
 
 
 def human(n: float) -> str:
@@ -70,8 +82,8 @@ class Ctx:
         self.cwd = Path(a.cwd).resolve() if getattr(a, "cwd", None) else None
         self.session = getattr(a, "session", None) or (None if sandbox else (
             os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("GEMINI_SESSION_ID")))
-        protect = list(getattr(a, "protect", None) or [])
-        self.protect = [os.path.realpath(p) for p in protect]
+        protect = [os.path.abspath(p) for p in (getattr(a, "protect", None) or [])]
+        self.protect = rules.KeepList(self.home, protect)     # --protect: same identity matching as keep
         host = None if sandbox else os.environ.get("CLAUDE_CODE_HOST_SESSION_ID")
         self.protect_names = {host} if host else set()
         self.state = self.home / ".cache" / MARK
@@ -83,15 +95,24 @@ class Ctx:
         self.warn_bytes = n["warn_below_gb"] * GIB if "warn_below_gb" in raw else LOW_FREE_BYTES
         self.warn_fraction = n["warn_below_percent"] / 100 if "warn_below_percent" in raw else LOW_FREE_FRACTION
         self.kept = []          # (rule, bytes, reason) reported but not removable
+        self.use_ctime = self.real_home   # sandboxes and the simulator fake time with mtimes only
         self._never = {os.path.realpath(self.home / n) for n in NEVER}
+        # identities, so no spelling (APFS case, `..`, `//`, symlinked parents) slips past the guards
+        self._lineage = {}                               # per-run cache: folder -> (real path, identities)
+        self._never_above = set()
+        for n in NEVER + NEVER_TREE:
+            target = rules.node(self.home / n)           # where a symlinked one (iCloud Documents) points
+            self._never_above.update(rules.lineage(self.home / n) + ([target] if target else []))
+        self._never_tree = {x for x in (rules.node(self.home / n) for n in NEVER_TREE) if x}
+        self._personal = {x for x in (rules.node(self.home / d) for d in rules.PERSONAL_DIRS) if x}
 
     # one walk: allocated bytes (hardlinks once), newest mtime, early-exit when active
-    def stats(self, path, cutoff=None):
+    def stats(self, path, cutoff=None, use_ctime=False):
         try:
             st = os.lstat(path)
         except OSError:
             return 0, 0.0, False
-        size, newest = st.st_blocks * 512, st.st_mtime
+        size, newest = st.st_blocks * 512, max(st.st_mtime, st.st_ctime) if use_ctime else st.st_mtime
         if cutoff is not None and newest > cutoff:
             return size, newest, True
         if not stat.S_ISDIR(st.st_mode):
@@ -108,8 +129,9 @@ class Ctx:
                         s = e.stat(follow_symlinks=False)
                     except OSError:
                         continue
-                    if s.st_mtime > newest:
-                        newest = s.st_mtime
+                    t = max(s.st_mtime, s.st_ctime) if use_ctime else s.st_mtime
+                    if t > newest:
+                        newest = t
                         if cutoff is not None and newest > cutoff:
                             return size, newest, True
                     if s.st_nlink > 1 and not stat.S_ISDIR(s.st_mode):
@@ -121,24 +143,34 @@ class Ctx:
                         stack.append(e.path)
         return size, newest, False
 
-    def allowed(self, item: Item) -> bool:
+    def allowed(self, item: Item, tier: str = "auto") -> bool:
+        """May `item` be deleted by a rule of this tier? Every guard here holds whatever the rule says."""
         if not item.path or not item.root:
             return False
-        rp = os.path.join(os.path.realpath(os.path.dirname(item.path)), os.path.basename(item.path))
-        root = os.path.realpath(item.root)
+        try:
+            rp = os.path.join(rules.real_parent(item.path, self._lineage)[0], os.path.basename(item.path))
+            root = os.path.realpath(item.root)
+        except (OSError, ValueError):
+            return False
         if rp == root or not rp.startswith(root + os.sep):
             return False
         if rp in self._never or any(n.startswith(rp + os.sep) for n in self._never):
             return False
+        lin = rules.lineage(item.path, self._lineage)
+        if not lin or lin[0] in self._never_above:       # gone, or a protected path or one of its parents
+            return False
+        if any(n in self._never_tree for n in lin):      # inside credentials, agent config, memory, skills
+            return False
+        if tier == "auto" and any(n in self._personal for n in lin):
+            return False                                 # automatic sweeps never reach into personal folders
         if self.session and self.session in rp:
             return False
         if any(n in rp for n in self.protect_names):
             return False
-        if self.policy.keep and (kept(self.home, self.policy.keep, rp) or kept(self.home, self.policy.keep, item.path)):
+        if self.policy.keeper.protects(item.path, self._lineage):
             return False
-        for p in self.protect:
-            if rp == p or rp.startswith(p + os.sep) or p.startswith(rp + os.sep):
-                return False
+        if self.protect.patterns and self.protect.protects(item.path, self._lineage):
+            return False
         return True
 
 
@@ -150,9 +182,10 @@ class SecondChance:
     def __init__(self, ctx):
         self.ctx, self.path = ctx, ctx.state / "armed.json"
         try:
-            self.armed = json.loads(self.path.read_text())
+            armed = json.loads(self.path.read_text())
         except (OSError, ValueError):
-            self.armed = {}
+            armed = {}
+        self.armed = {k: v for k, v in armed.items() if isinstance(v, (int, float))} if isinstance(armed, dict) else {}
 
     @staticmethod
     def sentinels(entry):
@@ -193,9 +226,9 @@ class SecondChance:
 
     def atime_works(self) -> bool:
         if not hasattr(self, "_atime"):
-            self.ctx.state.mkdir(parents=True, exist_ok=True)
             probe = self.ctx.state / ".atime-probe"
             try:
+                self.ctx.state.mkdir(parents=True, exist_ok=True)
                 probe.write_text("x")
                 s = os.stat(probe)
                 os.utime(probe, (s.st_mtime - 10, s.st_mtime))
@@ -253,7 +286,7 @@ def collect(ctx, tiers, only, apply, skip_probation):
             continue
         try:
             items = [i for i in r.find(ctx, days if days is not None else 0)
-                     if i.cmd or tier == "info" or ctx.allowed(i)]
+                     if i.cmd or tier == "info" or ctx.allowed(i, tier)]
         except Exception as e:  # a broken rule must never abort the sweep
             ctx.kept.append((r.id, 0, f"error: {e}"))
             continue
@@ -265,7 +298,10 @@ def collect(ctx, tiers, only, apply, skip_probation):
         if items or pending:
             out.append((r, tier, items, pending))
     if apply:
-        sc.save()
+        try:
+            sc.save()
+        except OSError:
+            pass            # can't record armed entries (disk full, odd state dir): they re-arm next time
     return out
 
 
@@ -279,10 +315,11 @@ def run_cmd(cmd):
         return False
 
 
-def remove(ctx, item: Item) -> int:
-    if not ctx.allowed(item):
+def remove(ctx, item: Item, tier: str = "auto") -> int:
+    if not ctx.allowed(item, tier):
         return 0
-    before, _, active = ctx.stats(item.path, ctx.now - MIN_IDLE)   # race guard: written meanwhile?
+    # race guard: written (or restored, extracted, moved in) meanwhile?
+    before, _, active = ctx.stats(item.path, ctx.now - MIN_IDLE, ctx.use_ctime)
     if active:
         return 0
     try:
@@ -299,16 +336,44 @@ def remove(ctx, item: Item) -> int:
 def ledger(ctx, freed, by_rule, source):
     if not freed:
         return
-    ctx.state.mkdir(parents=True, exist_ok=True)
-    with open(ctx.state / "ledger.jsonl", "a") as f:
-        f.write(json.dumps({"t": ctx.now, "freed": freed, "by": by_rule, "src": source}) + "\n")
+    try:
+        ctx.state.mkdir(parents=True, exist_ok=True)
+        with open(ctx.state / "ledger.jsonl", "a") as f:
+            f.write(json.dumps({"t": ctx.now, "freed": freed, "by": by_rule, "src": source}) + "\n")
+    except OSError:
+        pass                # the space is freed either way; only the report misses it
+
+
+def log_removed(ctx, lines):
+    """Append what was deleted to removed.log (one line per path), trimming it to the newest ~1 MB."""
+    if not lines:
+        return
+    path = ctx.state / "removed.log"
+    try:
+        ctx.state.mkdir(parents=True, exist_ok=True)
+        with open(path, "a") as f:
+            f.write("".join(lines))
+        if path.stat().st_size > REMOVED_LOG_MAX:
+            tail = path.read_bytes()[-REMOVED_LOG_MAX // 2:]
+            tmp = path.with_suffix(".tmp")
+            tmp.write_bytes(tail[tail.find(b"\n") + 1:])
+            os.replace(tmp, path)
+    except OSError:
+        pass
 
 
 def sweep(ctx, tiers, only=None, source="manual", skip_probation=None):
+    if ctx.policy.paused:   # the user's keep list or rules can't be read: deleting now could ignore them
+        return 0, {}
     free, total = free_space(ctx)
     if skip_probation is None:
         skip_probation = free < CRITICAL_FREE_BYTES
     freed, by_rule = 0, {}
+    stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(ctx.now))
+
+    def logged(rule_id, n, what):          # written as each delete happens, so a killed sweep is still on record
+        what = what.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t")
+        log_removed(ctx, [f"{stamp}\t{rule_id}\t{n}\t{what}\n"])
     for rule, tier, items, _pending in collect(ctx, tiers, only, True, skip_probation):
         if tier == "info":
             continue
@@ -316,10 +381,16 @@ def sweep(ctx, tiers, only=None, source="manual", skip_probation=None):
         for it in items:
             if it.cmd:
                 u0 = shutil.disk_usage(ctx.home).free if ctx.real_home else 0
-                run_cmd(it.cmd)
-                got += max(0, shutil.disk_usage(ctx.home).free - u0) if ctx.real_home else 0
+                ok = run_cmd(it.cmd)
+                n = max(0, shutil.disk_usage(ctx.home).free - u0) if ctx.real_home else 0
+                got += n
+                if ok:
+                    logged(rule.id, n, "$ " + " ".join(it.cmd))
             else:
-                got += remove(ctx, it)
+                n = remove(ctx, it, tier)
+                got += n
+                if n or not os.path.lexists(it.path):
+                    logged(rule.id, n, it.path)
         if got:
             by_rule[rule.id] = got
             freed += got
@@ -340,9 +411,27 @@ def cmd_status(ctx, a):
     return 0
 
 
+def tilde(ctx, path: str) -> str:
+    h = str(ctx.home)
+    return "~" + path[len(h):] if path == h or path.startswith(h + os.sep) else path
+
+
+PATHS_MAX = 40
+
+
 def cmd_scan(ctx, a):
     tiers = ("auto", "confirm", "info")
     results = collect(ctx, tiers, set(a.only or []), False, a.no_probation)
+    if getattr(a, "paths", False):
+        rows = [(r.id, tier, i) for r, tier, its, _p in results for i in sorted(its, key=lambda i: -i.size)]
+        for rid, tier, i in rows[:PATHS_MAX]:
+            what = " ".join(i.cmd) if i.cmd else tilde(ctx, i.path)
+            print(f"{rid:<22} {tier:<7} {human(i.size):>9}  {what}")
+        if len(rows) > PATHS_MAX:
+            print(f"... {len(rows) - PATHS_MAX} more (narrow with --only RULE)")
+        if not rows:
+            print("nothing to list")
+        return 0
     if a.json:
         print(json.dumps([{"rule": r.id, "tier": tier, "bytes": sum(i.size for i in its),
                            "pending": p, "items": len(its)} for r, tier, its, p in results]))
@@ -382,6 +471,8 @@ def cmd_scan(ctx, a):
         print(f"kept: {rule} {human(size)} ({why})")
     for err in ctx.policy.errors[:3]:
         print(f"config problem: {err} (steward.py config show)")
+    if ctx.policy.paused:
+        print("deletes paused until the config is fixed; nothing will be removed")
     tip = retention_tip(ctx)
     if tip:
         print(tip)
@@ -434,8 +525,14 @@ def cmd_sweep(ctx, a):
     if a.tier == "confirm" and not a.yes:
         print("refusing: confirm tier needs --yes (only after the user agreed)")
         return 2
+    if a.tier == "confirm" and not a.only:
+        print("refusing: name the rules the user approved with --only RULE[,RULE]")
+        return 2
     if a.dry_run:
         return cmd_scan(ctx, a)
+    if ctx.policy.paused:
+        print(f"paused: {ctx.policy.paused}; nothing removed. Fix it, then check with `steward.py config show`")
+        return 0
     freed, by_rule = sweep(ctx, tiers, set(a.only or []), "manual", True if a.no_probation else None)
     free, total = free_space(ctx)
     top = ", ".join(f"{k} {human(v)}" for k, v in sorted(by_rule.items(), key=lambda x: -x[1])[:4])
@@ -444,10 +541,17 @@ def cmd_sweep(ctx, a):
 
 
 def cmd_report(ctx, a):
+    rows = []
     try:
-        rows = [json.loads(l) for l in (ctx.state / "ledger.jsonl").read_text().splitlines() if l.strip()]
+        for line in (ctx.state / "ledger.jsonl").read_text().splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and isinstance(row.get("by"), dict) and "freed" in row and "t" in row:
+                rows.append(row)
     except OSError:
-        rows = []
+        pass
     if not rows:
         print("nothing reclaimed yet")
         return 0
@@ -459,6 +563,7 @@ def cmd_report(ctx, a):
             by[k] = by.get(k, 0) + v
     top = ", ".join(f"{k} {human(v)}" for k, v in sorted(by.items(), key=lambda x: -x[1])[:5])
     print(f"reclaimed {human(total)} over {days:.0f}d in {len(rows)} sweeps ({top})")
+    print(f"every removed path: {tilde(ctx, str(ctx.state / 'removed.log'))}")
     return 0
 
 
@@ -491,14 +596,34 @@ def _emit(agent: str, event: str, warning: str = ""):
         print("{}")
 
 
-def cmd_hook(ctx, a):
+def _hook_input() -> dict:
+    """The agent's JSON on stdin; anything else (no stdin, garbage, a list) reads as {}."""
     try:
         data = json.loads(sys.stdin.read() or "{}") if not sys.stdin.isatty() else {}
-    except ValueError:
-        data = {}
-    ctx.session = data.get("session_id") or data.get("conversation_id") or ctx.session
-    cwd = data.get("cwd") or (data.get("workspace_roots") or [None])[0]
-    if cwd:
+    except (ValueError, OSError, UnicodeDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def cmd_hook(ctx, a):
+    """Never fails and never makes the agent wait: any error ends quietly in the agent's own format."""
+    said = []
+    try:
+        return _hook(ctx, a, said)
+    except Exception:
+        if not said and not a.foreground:
+            _emit(a.agent, a.event)
+        return 0
+
+
+def _hook(ctx, a, said):
+    data = _hook_input()
+    sid = data.get("session_id") or data.get("conversation_id")
+    if isinstance(sid, str) and sid:
+        ctx.session = sid
+    roots = data.get("workspace_roots")
+    cwd = data.get("cwd") or (roots[0] if isinstance(roots, list) and roots else None)
+    if isinstance(cwd, str) and cwd:
         ctx.cwd = Path(cwd).resolve()
     if a.event == "prompt":
         free, total = free_space(ctx)
@@ -506,13 +631,18 @@ def cmd_hook(ctx, a):
         warning = ""
         if is_low(free, total, ctx) and (a.self_test or _stamp_due(stamp, WARN_INTERVAL, ctx.now)):
             if not a.self_test:
-                _touch(stamp, ctx.now)
+                try:
+                    _touch(stamp, ctx.now)
+                except OSError:
+                    pass        # disk full or odd state dir: warn anyway, just not throttled
             warning = (f"[storage-steward] disk low: {human(free)} free ({100 * free / total:.0f}%). "
                        "Before big writes, run the storage-steward skill's scan.")
+        said.append(1)
         _emit(a.agent, a.event, warning)
         return 0
     # stop / session-end: answer the agent at once, sweep in a detached process
     if not a.foreground:
+        said.append(1)
         _emit(a.agent, a.event)
     if a.self_test:
         return 0      # install's self-test: measure the hook path, never start a sweep
@@ -526,8 +656,14 @@ def cmd_hook(ctx, a):
         subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
         return 0
-    ctx.state.mkdir(parents=True, exist_ok=True)
-    with open(ctx.state / "sweep.lock", "w") as lock:
+    if ctx.policy.paused:
+        return 0
+    try:
+        ctx.state.mkdir(parents=True, exist_ok=True)
+        lock = open(ctx.state / "sweep.lock", "w")
+    except OSError:
+        return 0      # no state dir means no lock and no throttle: skip rather than risk overlapping sweeps
+    with lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -637,6 +773,7 @@ def main(argv=None):
     p.add_argument("--home"), p.add_argument("--tmp"), p.add_argument("--user-tmp")
     p.add_argument("--now", type=float), p.add_argument("--cwd"), p.add_argument("--session")
     p.add_argument("--protect", action="append")
+    p.add_argument("--version", action="version", version=f"storage-steward {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("status"); s.add_argument("--quiet", action="store_true")
     for name in ("scan", "sweep"):
@@ -645,6 +782,8 @@ def main(argv=None):
         s.add_argument("--top", type=int, default=6)
         s.add_argument("--json", action="store_true")
         s.add_argument("--no-probation", action="store_true", help="evict idle caches now (disk emergency)")
+        if name == "scan":
+            s.add_argument("--paths", action="store_true", help="list every path a sweep would remove")
         if name == "sweep":
             s.add_argument("--tier", choices=("auto", "confirm"), default="auto")
             s.add_argument("--yes", action="store_true")
