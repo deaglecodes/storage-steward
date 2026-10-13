@@ -77,6 +77,22 @@ Feedback on v1: it looked like you still had to prompt for a cleanup, and it nee
 - Claims used: 85% less disk, 0 files lost, 72% fewer tokens (60-day simulation and token evals), 0 tokens per prompt, 61 ms hook (`bench/results/hook_latency.json`, median 60.8 ms). The time-lapse GB values are illustrative and labeled TIME-LAPSE.
 - Render: `bun scripts/render.ts Launch2 storage-steward-launch-v2 --duration 45 --poster 44.3`.
 
+## Launch v3, the minimal cut (`src/videos/launch3/`, 32 s, 16 bars at 120 BPM)
+The film for the minimal site. It uses the site's light theme and its type: Bricolage Grotesque for display, the system UI and mono faces for the rest. No agent is named; the copy says "your agent" and "any agent that reads SKILL.md". Every scene leaves the same way: the blue sweep line crosses it and leaves a clean page, landing on the next bar.
+
+| Bars | Scene | What happens |
+|---|---|---|
+| 1–4 | `Mess` | leftovers flood the page and the meter fills; "Your agents leave files behind."; a two-bar sweep erases everything |
+| 5–6 | `Less` | "Less." letter by letter, the dot lands on beat 3; "storage-steward cleans up while your agents work." |
+| 7–8 | `Clone` | "Clone it into your agent." and the install command typed; "Works with any agent that reads SKILL.md." |
+| 9–10 | `Forget` | sessions run along a track; a background sweep clears what they leave, every few sessions; "Sweeps in the background. 0 tokens per prompt." |
+| 11–12 | `Rules` | a plain-English ask becomes one `steward.py config` line |
+| 13–14 | `Proof` | 79–85% less disk, 72% fewer tokens, 0 files lost, with their source |
+| 15–16 | `End` | the logo draws, the wordmark, "Works with any agent that reads SKILL.md.", the URL |
+
+- Score: `tools/score_v3.py`, one file with no separate SFX. Typing ticks, sweeps and stat hits sit on the same cue numbers as `cues.ts`.
+- Render: `bun scripts/render.ts Launch3 storage-steward-launch-v3 --duration 32 --poster 31.2`.
+
 ## Workspace
 - `videos/` (Remotion 4.0.530 pinned, React 19.3.0; all packages ≥ 7 days old via `npm install --before`).
 - Fonts via `@remotion/google-fonts`. Music via `tools/synth.py`; beat grid checked with `scripts/beats.py`.
