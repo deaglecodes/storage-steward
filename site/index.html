@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="__CSP__">
 <title>storage-steward · less disk, zero effort</title>
-<meta name="description" content="storage-steward cleans up after Claude Code, Codex, Cursor and Gemini CLI while they work. 79–85% less disk, zero tokens per prompt, no lost files.">
+<meta name="description" content="storage-steward cleans up after your coding agents while they work. 79–85% less disk, zero tokens per prompt, no lost files. Works with any agent that reads SKILL.md.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0a0e13" media="(prefers-color-scheme: dark)">
@@ -75,6 +75,7 @@ a { color: inherit; }
 .copy:hover { opacity: 0.86; }
 .copy:active { transform: scale(0.96); }
 .works { width: fit-content; font-size: 13px; color: var(--muted); margin: 16px 0 0; }
+.works code { font: 12.5px var(--f-mono); color: var(--ink); }
 .js .hero-in > :not(.less) { animation: rise 0.9s var(--ease) both; }
 .js .hero-in > .lede { animation-delay: 0.08s; }
 .js .hero-in > .cmd { animation-delay: 0.16s; }
@@ -160,10 +161,7 @@ a { color: inherit; }
 .x { position: absolute; top: 10px; right: 10px; z-index: 1; width: 38px; height: 38px; font-size: 22px; line-height: 1; color: #fff; background: rgb(255 255 255 / 0.14); border: 0; border-radius: 50%; cursor: pointer; }
 
 /* the end: what this page weighs */
-.foot { padding-block: var(--section) 40px; }
-.kb { margin: 0; font-size: clamp(92px, 17vw, 236px); letter-spacing: -0.065em; font-variant-numeric: tabular-nums; }
-.kb small { margin-left: 0.1em; font-size: 0.3em; letter-spacing: -0.02em; }
-.kb-cap { margin: 20px 0 clamp(80px, 11vw, 136px); color: var(--muted); }
+.foot { padding-block: clamp(112px, 14vw, 184px) 40px; }
 .fine { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 24px; padding-top: 22px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
 .fine nav { display: flex; gap: 22px; }
 
@@ -196,7 +194,7 @@ a { color: inherit; }
       <h1 class="d less" id="hero-h"><span class="sr">storage-steward: </span>Less<span class="dot">.</span></h1>
       <p class="lede">Your coding agents leave gigabytes behind. <b>storage-steward</b> sweeps them while you work.</p>
       <div class="cmd"><code id="cmd">git clone https://github.com/deaglecodes/storage-steward &amp;&amp; cd storage-steward &amp;&amp; ./install.sh</code><button class="copy" type="button" data-copy="cmd">Copy</button></div>
-      <p class="works">Claude Code · Codex · Cursor · Gemini CLI · any SKILL.md agent</p>
+      <p class="works">Works with any agent that reads <code>SKILL.md</code>.</p>
     </div>
     <div class="wrap status">
       <output id="left" aria-hidden="true">0 leftovers</output>
@@ -244,14 +242,12 @@ a { color: inherit; }
 
   <section class="blk wrap" id="film" aria-labelledby="film-h">
     <p class="tag" id="film-h">film</p>
-    <button class="play" type="button" data-reveal><span class="tri" aria-hidden="true"></span>Watch the launch film <span class="dur">0:45</span></button>
+    <button class="play" type="button" data-reveal><span class="tri" aria-hidden="true"></span>Watch the launch film <span class="dur">0:32</span></button>
     <dialog class="dlg" aria-label="Launch film"><button class="x" type="button" aria-label="Close">×</button><div class="vid"></div></dialog>
   </section>
 </main>
 
 <footer class="wrap foot">
-  <p class="d kb" data-reveal><span id="kb">__WEIGHT__</span><small>KB</small></p>
-  <p class="kb-cap" data-reveal style="--rd: 0.08s">This whole page on a first visit, fonts included. The film loads only if you press play.</p>
   <div class="fine"><span>storage-steward · MIT</span><nav aria-label="Footer"><a class="u" href="https://github.com/deaglecodes/storage-steward">GitHub</a><a class="u" href="benchmarks.html">Benchmarks</a><a class="u" href="#top">Top ↑</a></nav></div>
 </footer>
 
@@ -268,9 +264,9 @@ a { color: inherit; }
   const hero = $(".hero"), mess = $(".mess"), sweep = $(".sweep"), meter = $(".meter"), fill = $(".meter i");
   const left = $("#left"), again = $(".again"), dot = $(".less .dot");
   const NAMES = ["tasks/#.output", ".npm/_npx/#", "worktrees/agent-#", "rollout-#.jsonl", "DerivedData/App-#", "file-history/#",
-    "local_#/.claude", ".cache/uv/archive-#", "opencode/snapshot/#", "gemini/tmp/#", "ShipIt/update-#.zip", "debug/#.txt", "node_modules",
-    "tmp.agent#", "projects/#.jsonl", "pnpm/store/v10/#", "pip/http-v2/#", "shell-snapshots/#.sh", "ms-playwright/chromium-#",
-    "codex/sessions/#.jsonl", "cursor/logs/#", "claude-501/#", "Homebrew/downloads/#", ".venv", "buildx/cache/#"];
+    "sessions/#.jsonl", ".cache/uv/archive-#", "snapshots/#", "checkpoints/#", "ShipIt/update-#.zip", "debug/#.txt", "node_modules",
+    "tmp.agent#", "transcripts/#.jsonl", "pnpm/store/v10/#", "pip/http-v2/#", "shell-snapshots/#.sh", "ms-playwright/chromium-#",
+    "agent-logs/#.log", "tmp/agent-#", "Homebrew/downloads/#", ".venv", "buildx/cache/#"];
   const FLOOD = 1250, HOLD = 450, SWEEP = 1500, ROW = 21, PAD = 14;
   let running = false;
 
@@ -394,9 +390,9 @@ a { color: inherit; }
   /* rules: plain English in, one config command out */
   const ASKS = [
     ["keep ~/models and every .mov", "steward.py config keep ~/models '*.mov'"],
-    ["never delete my transcripts", "steward.py config set claude-transcripts --tier off"],
+    ["never touch my Docker cache", "steward.py config set docker-cache --tier off"],
     ["clean ~/work/*/build after a week", "steward.py config add work-builds --path '~/work/*/build' --idle 7 --tier auto"],
-    ["sweep task output after 6 hours", "steward.py config set claude-task-output --idle 6h"],
+    ["drop stale worktrees after 3 days", "steward.py config set agent-worktrees --idle 3"],
   ];
   const say = $("#say"), run = $("#run"), ok = $("#ok");
   let rulesVisible = false;
@@ -421,14 +417,12 @@ a { color: inherit; }
   if (!reduce) { ok.classList.add("on"); rules(); }
 
   /* the last number: what a first visit downloads, measured when the site is built */
-  const kb = $("#kb"), weight = Number(kb.textContent);
 
   /* reveal on scroll */
   const onReveal = (el) => {
     el.querySelectorAll("[data-count]").forEach((n) => !reduce && countUp(n, n.dataset.count.split(",").map(Number)));
     if (el.classList.contains("chart")) plot.classList.add("drawn");
     if (el.classList.contains("term")) rulesVisible = true;
-    if (el.classList.contains("kb") && !reduce) countUp(kb, [weight], 1);
   };
   const io = new IntersectionObserver((entries) => {
     for (const e of entries) {

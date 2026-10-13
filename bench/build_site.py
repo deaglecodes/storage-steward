@@ -14,7 +14,6 @@ import hashlib
 import json
 import re
 import urllib.parse
-import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -25,8 +24,7 @@ TASKS = {"eval-1-disk-full-cleanup": "Free up space now", "eval-2-automate-clean
 TOP_GB = 320          # chart y-scale; the no-cleanup line peaks just under 300 GB
 GRID_GB = 300         # the one labelled gridline
 FONT = "Bricolage+Grotesque:opsz,wght@96,800"
-EXTRA_GLYPHS = "0123456789.,–%KB "   # text the scripts write in the display face (counters, page weight)
-BROWSER = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129 Safari/537.36"
+EXTRA_GLYPHS = "0123456789–% "      # text the counters write in the display face
 
 
 def token_saving(data: dict) -> int:
@@ -100,45 +98,6 @@ def font_url(html: str) -> str:
     return f"https://fonts.googleapis.com/css2?family={FONT}&amp;text={query}&amp;display=swap"
 
 
-def fetch(url: str) -> bytes:
-    """Bytes as they arrive on the wire (gzip left compressed), the way a browser would download them."""
-    req = urllib.request.Request(url, headers={"User-Agent": BROWSER, "Accept-Encoding": "gzip"})
-    with urllib.request.urlopen(req, timeout=15) as res:
-        return res.read()
-
-
-def font_bytes(url: str) -> int:
-    """What the subset font costs a first visit: its stylesheet plus every font file the stylesheet points at."""
-    try:
-        sheet = fetch(url.replace("&amp;", "&"))
-        css = gzip.decompress(sheet).decode() if sheet[:2] == b"\x1f\x8b" else sheet.decode()
-        return len(sheet) + sum(len(fetch(src)) for src in re.findall(r"url\((https://fonts\.gstatic\.com[^)]+)\)", css))
-    except OSError as err:
-        print(f"font size unavailable offline ({err}); assuming 5 KB")
-        return 5000
-
-
-def page_weight(html: str, fonts: str) -> float:
-    """KB a first visit downloads: the gzipped HTML GitHub Pages serves plus the subset font.
-
-    Measured once per page version and recorded, so CI rebuilds the exact same page without
-    touching the network or depending on its zlib build.
-    """
-    record = ROOT / "bench/results/site_weight.json"
-    key = hashlib.sha256((html + fonts).encode()).hexdigest()
-    try:
-        saved = json.loads(record.read_text())
-    except (OSError, ValueError):
-        saved = {}
-    if saved.get("key") == key:
-        return saved["kb"]
-    # GitHub Pages serves this page gzipped at the equivalent of level 5; the weight's own digits are a stand-in.
-    html_gz, font = len(gzip.compress(html.replace("__WEIGHT__", "00.0").encode(), 5)), font_bytes(fonts)
-    kb = round((html_gz + font) / 1000, 1)
-    record.write_text(json.dumps({"key": key, "kb": kb, "html_gzip_bytes": html_gz, "font_bytes": font}, indent=1) + "\n")
-    return kb
-
-
 def csp(html: str) -> str:
     hashes = " ".join(
         f"'sha256-{base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()}'"
@@ -165,9 +124,7 @@ def main() -> None:
             .replace("__NONE_GB__", str(round(none[-1]))).replace("__ST_GB__", str(round(steward[-1]))))
     fonts = font_url(html)
     html = html.replace("__FONTS__", fonts)
-    html = html.replace("__CSP__", csp(html))   # the policy pins the scripts; the weight sits outside them
-    weight = page_weight(html, fonts)
-    html = html.replace("__WEIGHT__", f"{weight:.1f}")
+    html = html.replace("__CSP__", csp(html))
     leftover = re.findall(r"__[A-Z_]+__", html)
     if leftover:
         raise SystemExit(f"unfilled placeholders: {sorted(set(leftover))}")
@@ -175,7 +132,7 @@ def main() -> None:
     (ROOT / "docs/index.html").write_text(html)
     (ROOT / "docs/.nojekyll").write_text("")
     raw, packed = len(html.encode()), len(gzip.compress(html.encode(), 9))
-    print(f"wrote docs/index.html ({raw / 1000:.1f} KB, {packed / 1000:.1f} KB gzipped, page weight {weight:.1f} KB) · disk {lo}–{hi}% · tokens {tok}%")
+    print(f"wrote docs/index.html ({raw / 1000:.1f} KB, {packed / 1000:.1f} KB gzipped) · disk {lo}–{hi}% · tokens {tok}%")
 
 
 if __name__ == "__main__":
