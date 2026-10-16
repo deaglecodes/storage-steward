@@ -648,6 +648,18 @@ class RuleSafetyTests(SafetySandbox):
         _, out = self.run_cli("scan", "--only", "stale-project-deps", "--paths")
         self.assertIn("~/Documents/oldproj/node_modules", out)
 
+    def test_scan_paths_for_named_rules_lists_every_path(self):
+        n = steward.PATHS_MAX + 10
+        for i in range(n):
+            mk(self.home / f".codex/sessions/2026/01/01/r{i:03}.jsonl", 4096, age_days=90)
+        _, out = self.run_cli("scan", "--only", "codex-sessions", "--paths")
+        listed = [line for line in out.splitlines() if line.startswith("codex-sessions")]
+        self.assertEqual(len(listed), n, "the user approves these paths, so none may be hidden")
+        self.assertNotIn("more", out)
+        _, out = self.run_cli("scan", "--paths")
+        self.assertEqual(len(out.splitlines()), steward.PATHS_MAX + 1, "the unfiltered listing stays short")
+        self.assertIn("10 more in codex-sessions", out.splitlines()[-1])
+
     def test_user_tmp_keeps_socket_dirs(self):
         import socket
         named = self.utmp / "tmux-501"                  # skipped by name even without a socket

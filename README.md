@@ -219,7 +219,7 @@ The policy lives in `~/.config/storage-steward/config.json`:
 ```text
 steward.py status                 one line: free space, flags LOW
 steward.py scan                   dry run, grouped by tier (~15 lines)
-steward.py scan --paths           dry run, every path a sweep would remove
+steward.py scan --paths           dry run, first 40 paths a sweep would remove (all with --only RULE)
 steward.py sweep                  reclaim the auto tier
 steward.py sweep --tier confirm --only RULE[,RULE] --yes
 steward.py report                 total reclaimed so far, and where the removal log is

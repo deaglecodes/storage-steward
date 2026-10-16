@@ -3,6 +3,14 @@
 All notable changes to storage-steward. Versions follow [Semantic Versioning](https://semver.org); the
 release workflow publishes each version's section below as its GitHub release notes.
 
+## [Unreleased]
+
+### Fixed
+
+- `scan --only RULE --paths` lists every path those rules would remove. It used to stop after 40 and
+  suggest `--only RULE` even when one was given, so a confirm sweep could remove paths you were never
+  shown. Without `--only`, the listing still stops at 40 and names the rules it left out.
+
 ## [0.2.0] - 2026-10-11
 
 The first release since the original Claude Code version. It works with any coding agent, lets you set

@@ -416,7 +416,7 @@ def tilde(ctx, path: str) -> str:
     return "~" + path[len(h):] if path == h or path.startswith(h + os.sep) else path
 
 
-PATHS_MAX = 40
+PATHS_MAX = 40      # `scan --paths` without --only stops here; with --only every path is listed
 
 
 def cmd_scan(ctx, a):
@@ -424,11 +424,14 @@ def cmd_scan(ctx, a):
     results = collect(ctx, tiers, set(a.only or []), False, a.no_probation)
     if getattr(a, "paths", False):
         rows = [(r.id, tier, i) for r, tier, its, _p in results for i in sorted(its, key=lambda i: -i.size)]
-        for rid, tier, i in rows[:PATHS_MAX]:
+        shown = rows if a.only else rows[:PATHS_MAX]     # named rules are what the user approves: hide nothing
+        for rid, tier, i in shown:
             what = " ".join(i.cmd) if i.cmd else tilde(ctx, i.path)
             print(f"{rid:<22} {tier:<7} {human(i.size):>9}  {what}")
-        if len(rows) > PATHS_MAX:
-            print(f"... {len(rows) - PATHS_MAX} more (narrow with --only RULE)")
+        if len(rows) > len(shown):
+            names = sorted({rid for rid, _, _ in rows[len(shown):]})
+            more = ", ".join(names[:4]) + (", ..." if len(names) > 4 else "")
+            print(f"... {len(rows) - len(shown)} more in {more} (scan --only RULE --paths lists all of them)")
         if not rows:
             print("nothing to list")
         return 0
