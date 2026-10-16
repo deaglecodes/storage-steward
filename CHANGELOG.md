@@ -3,6 +3,17 @@
 All notable changes to storage-steward. Versions follow [Semantic Versioning](https://semver.org); the
 release workflow publishes each version's section below as its GitHub release notes.
 
+## [Unreleased]
+
+### Fixed
+
+- `config set` no longer reports "saved" for a setting that changes nothing. `--idle` on a rule that
+  isn't age-based (`pnpm-store`, `simulators`, the report-only rules) and `--tier auto` or `confirm` on a
+  report-only rule (`trash`, `local-models`, `claude-vm`, `codex-db`, `sandbox-outputs`) are refused.
+  Such settings already in the config are ignored and listed by `rules` and `scan`; before, promoting
+  `trash` made it vanish from the report. `config set` on your own rule now says when it stays at confirm
+  because it reaches into a personal folder.
+
 ## [0.2.0] - 2026-10-11
 
 The first release since the original Claude Code version. It works with any coding agent, lets you set
