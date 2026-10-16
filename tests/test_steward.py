@@ -1,4 +1,5 @@
 """Safety + behavior tests for storage-steward. Run: python3 -m unittest discover tests -v"""
+import collections
 import io
 import json
 import os
@@ -9,6 +10,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "storage-steward" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -16,6 +18,8 @@ import steward  # noqa: E402
 from rules import DAY, GIB, Item  # noqa: E402
 
 NOW = time.time()
+ROOMY = (500 * GIB, 1024 * GIB)        # (free, total) a sandbox's disk reports unless a test sets self.disk
+NEARLY_FULL = (GIB, 1024 * GIB)        # under the low-disk warning and the 5 GiB emergency line
 
 
 def mk(path: Path, size: int = 1024, age_days: float = 0.0) -> Path:
@@ -43,6 +47,12 @@ class Sandbox(unittest.TestCase):
         for d in (self.home, self.tmp, self.utmp):
             d.mkdir()
         self.ctmp = self.tmp / f"claude-{os.getuid()}"
+        # the host's real free space must never decide a result: on a nearly full disk hooks warn and
+        # sweeps skip probation, so the sandbox reports self.disk instead
+        self.disk = ROOMY
+        fake = mock.patch.object(steward, "free_space", lambda _ctx: self.disk)
+        fake.start()
+        self.addCleanup(fake.stop)
 
     def tearDown(self):
         self.td.cleanup()
@@ -205,21 +215,23 @@ class InstallTests(Sandbox):
         self.assertTrue(junk.exists(), "install must not sweep as a side effect")
 
     def test_prompt_hook_silent_unless_low(self):
-        old, old_f = steward.LOW_FREE_BYTES, steward.LOW_FREE_FRACTION
-        steward.LOW_FREE_BYTES, steward.LOW_FREE_FRACTION = 0, 0.0
-        try:
-            code, out = self.run_cli("hook", "prompt")
-        finally:
-            steward.LOW_FREE_FRACTION = old_f
+        _, out = self.run_cli("hook", "prompt")
         self.assertEqual(out, "", "zero tokens when disk is fine")
-        steward.LOW_FREE_BYTES = 1 << 60
-        try:
-            _, out = self.run_cli("hook", "prompt", session="s1")
-            self.assertIn("disk low", out)
-            _, again = self.run_cli("hook", "prompt", session="s1")
-            self.assertEqual(again, "", "warning throttled per session")
-        finally:
-            steward.LOW_FREE_BYTES = old
+        self.disk = NEARLY_FULL
+        _, out = self.run_cli("hook", "prompt", session="s1")
+        self.assertIn("disk low", out)
+        _, again = self.run_cli("hook", "prompt", session="s1")
+        self.assertEqual(again, "", "warning throttled per session")
+
+    def test_host_free_space_never_decides_a_result(self):
+        """CI runners always have room, so only this test notices a sandbox reading the real disk."""
+        usage = collections.namedtuple("usage", "total used free")
+        for free in (0, 1 << 50):                         # a full host disk, then a huge one
+            with mock.patch("shutil.disk_usage", return_value=usage(1 << 51, (1 << 51) - free, free)):
+                self.disk = ROOMY
+                self.assertEqual(self.run_cli("hook", "prompt", session=f"ok{free}")[1], "", f"host free {free}")
+                self.disk = NEARLY_FULL
+                self.assertIn("disk low", self.run_cli("hook", "prompt", session=f"low{free}")[1])
 
 
 
@@ -270,15 +282,11 @@ class MultiAgentTests(Sandbox):
             self.assertEqual(json.loads(out), want, f"{agent} {ev}")
         _, out = self.run_cli("hook", "stop", "--agent", "claude", "--self-test")
         self.assertEqual(out, "", "Claude stop hook stays silent")
-        old = steward.LOW_FREE_BYTES
-        steward.LOW_FREE_BYTES = 1 << 60
-        try:
-            _, out = self.run_cli("hook", "prompt", "--agent", "gemini", "--self-test")
-            self.assertIn("disk low", json.loads(out)["hookSpecificOutput"]["additionalContext"])
-            _, out = self.run_cli("hook", "prompt", "--agent", "codex", "--self-test")
-            self.assertTrue(out.startswith("[storage-steward] disk low"), "Codex takes plain-text context")
-        finally:
-            steward.LOW_FREE_BYTES = old
+        self.disk = NEARLY_FULL
+        _, out = self.run_cli("hook", "prompt", "--agent", "gemini", "--self-test")
+        self.assertIn("disk low", json.loads(out)["hookSpecificOutput"]["additionalContext"])
+        _, out = self.run_cli("hook", "prompt", "--agent", "codex", "--self-test")
+        self.assertTrue(out.startswith("[storage-steward] disk low"), "Codex takes plain-text context")
 
     def test_existing_foreign_skill_dir_is_not_replaced(self):
         (self.home / ".claude/skills/storage-steward").mkdir(parents=True)
