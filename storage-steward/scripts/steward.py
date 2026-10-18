@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import math
 import os
 import shutil
 import stat
@@ -540,20 +541,30 @@ def cmd_sweep(ctx, a):
     return 0
 
 
+def _number(v) -> bool:
+    """A real, finite number: JSON true/false, NaN and Infinity don't count."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
 def cmd_report(ctx, a):
-    rows = []
+    path, rows, bad = ctx.state / "ledger.jsonl", [], 0
     try:
-        for line in (ctx.state / "ledger.jsonl").read_text().splitlines():
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(row, dict) and isinstance(row.get("by"), dict) and "freed" in row and "t" in row:
-                rows.append(row)
+        lines = path.read_text(errors="replace").splitlines()    # a mangled byte spoils its line, not the file
     except OSError:
-        pass
+        lines = []
+    for line in filter(str.strip, lines):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            row = None
+        if isinstance(row, dict) and _number(row.get("t")) and _number(row.get("freed")) \
+                and isinstance(row.get("by"), dict) and all(map(_number, row["by"].values())):
+            rows.append(row)
+        else:
+            bad += 1
+    note = f"skipped {bad} unreadable line{'s' if bad != 1 else ''} in {tilde(ctx, str(path))}" if bad else ""
     if not rows:
-        print("nothing reclaimed yet")
+        print("nothing reclaimed yet" + (f" ({note})" if note else ""))
         return 0
     total = sum(r["freed"] for r in rows)
     days = max(1.0, (rows[-1]["t"] - rows[0]["t"]) / DAY)
@@ -564,6 +575,8 @@ def cmd_report(ctx, a):
     top = ", ".join(f"{k} {human(v)}" for k, v in sorted(by.items(), key=lambda x: -x[1])[:5])
     print(f"reclaimed {human(total)} over {days:.0f}d in {len(rows)} sweeps ({top})")
     print(f"every removed path: {tilde(ctx, str(ctx.state / 'removed.log'))}")
+    if note:
+        print(note)
     return 0
 
 

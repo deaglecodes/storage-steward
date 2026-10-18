@@ -3,6 +3,14 @@
 All notable changes to storage-steward. Versions follow [Semantic Versioning](https://semver.org); the
 release workflow publishes each version's section below as its GitHub release notes.
 
+## [Unreleased]
+
+### Fixed
+
+- `report` no longer crashes on a damaged `ledger.jsonl`. A line whose numbers aren't numbers, or a stray
+  invalid byte (a write cut short by a full disk), used to stop the whole report; now those lines are
+  skipped, the rest is totalled, and `report` says how many it skipped.
+
 ## [0.2.0] - 2026-10-11
 
 The first release since the original Claude Code version. It works with any coding agent, lets you set

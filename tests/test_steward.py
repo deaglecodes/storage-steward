@@ -869,6 +869,25 @@ class CliTests(SafetySandbox):
         _, out = self.run_cli("report")
         self.assertIn("removed.log", out)
 
+    def test_report_skips_unreadable_ledger_lines(self):
+        led = self.home / ".cache/storage-steward/ledger.jsonl"
+        led.parent.mkdir(parents=True)
+        led.write_bytes(b'{"t": 1, "freed": 1, "by": {"x": 1}' + b"\xff\n")      # only a mangled line
+        code, out = self.run_cli("report")
+        self.assertEqual((code, out.splitlines()[0]), (0, f"nothing reclaimed yet (skipped 1 unreadable line in "
+                                                          "~/.cache/storage-steward/ledger.jsonl)"))
+        good = [{"t": NOW - DAY, "freed": 3 * GIB, "by": {"npx-cache": 3 * GIB}},
+                {"t": NOW, "freed": GIB, "by": {"claude-debug": GIB}}]
+        bad = ['{"t": 2, "freed": "lots", "by": {"x": 5}}', '{"t": "noon", "freed": 1, "by": {}}',
+               '{"t": 3, "freed": 1, "by": {"x": "big"}}', '{"t": 4, "freed": true, "by": {}}',
+               '{"t": 5, "freed": NaN, "by": {}}', "[1, 2]", "{not json", ""]
+        lines = [json.dumps(good[0])] + bad + [json.dumps(good[1])]
+        led.write_bytes("\n".join(lines).encode() + b"\n\xff\xfe\n")
+        code, out = self.run_cli("report")
+        self.assertEqual(code, 0)
+        self.assertIn("reclaimed 4.0 GB over 1d in 2 sweeps (npx-cache 3.0 GB, claude-debug 1.0 GB)", out)
+        self.assertIn("skipped 8 unreadable lines", out, "7 bad rows and the mangled bytes; blank lines don't count")
+
     def test_confirm_sweep_needs_named_rules(self):
         f = mk(self.home / ".codex/sessions/2026/01/01/r.jsonl", 4096, age_days=90)
         code, out = self.run_cli("sweep", "--tier", "confirm", "--yes")
