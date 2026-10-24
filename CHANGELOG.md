@@ -16,6 +16,9 @@ release workflow publishes each version's section below as its GitHub release no
   Such settings already in the config are ignored and listed by `rules` and `scan`; before, promoting
   `trash` made it vanish from the report. `config set` on your own rule now says when it stays at confirm
   because it reaches into a personal folder.
+- `report` no longer crashes on a damaged `ledger.jsonl`. A line whose numbers aren't numbers, or a stray
+  invalid byte (a write cut short by a full disk), used to stop the whole report; now those lines are
+  skipped, the rest is totalled, and `report` says how many it skipped.
 
 ## [0.2.0] - 2026-10-11
 
