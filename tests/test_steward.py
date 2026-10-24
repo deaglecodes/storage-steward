@@ -367,6 +367,41 @@ class PolicyTests(Sandbox):
                 self.cfg("add", "nope", "--path", bad, "--tier", "auto")
         self.assertFalse((self.home / ".config/storage-steward/config.json").exists())
 
+    def test_settings_that_would_do_nothing_are_refused(self):
+        no_op = (("pnpm-store", "--idle", "7"), ("simulators", "--idle", "3"), ("trash", "--idle", "3"),
+                 ("trash", "--tier", "auto"), ("local-models", "--tier", "confirm"),
+                 ("codex-db", "--tier", "off", "--idle", "9"))
+        for args in no_op:
+            with self.assertRaises(SystemExit, msg=args) as cm:
+                self.cfg("set", *args)
+            self.assertIn("refusing", str(cm.exception.code), args)
+        self.assertFalse((self.home / ".config/storage-steward/config.json").exists(), "nothing saved")
+        self.cfg("set", "trash", "--tier", "off")             # a report-only rule can still be hidden
+        self.cfg("set", "pnpm-store", "--tier", "confirm")    # and a rule without an age can change tier
+        _, out = self.run_cli("rules")
+        self.assertIn("*trash", out)
+        self.assertIn("*pnpm-store", out)
+
+    def test_no_op_settings_already_in_a_config_are_flagged(self):
+        p = self.home / ".config/storage-steward/config.json"
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps({"rules": {"pnpm-store": {"idle_days": 7}, "trash": {"tier": "auto"}}}))
+        mk(self.home / ".Trash/old.bin", 2 << 20, age_days=90)
+        _, out = self.run_cli("rules")
+        self.assertIn("rules.pnpm-store.idle_days", out)
+        self.assertIn("rules.trash.tier", out)
+        self.assertNotIn("*trash", out, "an ignored setting is not a change")
+        _, out = self.run_cli("scan")
+        self.assertIn("  trash ", out, "the Trash stays in the report")
+        self.assertNotIn("paused", out, "harmless settings never pause deletes")
+
+    def test_set_says_when_a_rule_stays_ask_first(self):
+        self.cfg("add", "recordings", "--path", "~/Desktop/Screen Recording*.mov")
+        _, out = self.cfg("set", "recordings", "--tier", "auto")
+        self.assertIn("capped to confirm", out)
+        _, out = self.cfg("set", "codex-sessions", "--tier", "auto")
+        self.assertNotIn("capped", out)
+
     def test_broken_config_never_breaks_hooks(self):
         p = self.home / ".config/storage-steward/config.json"
         p.parent.mkdir(parents=True)

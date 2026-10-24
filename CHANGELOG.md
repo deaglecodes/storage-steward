@@ -10,6 +10,12 @@ release workflow publishes each version's section below as its GitHub release no
 - `scan --only RULE --paths` lists every path those rules would remove. It used to stop after 40 and
   suggest `--only RULE` even when one was given, so a confirm sweep could remove paths you were never
   shown. Without `--only`, the listing still stops at 40 and names the rules it left out.
+- `config set` no longer reports "saved" for a setting that changes nothing. `--idle` on a rule that
+  isn't age-based (`pnpm-store`, `simulators`, the report-only rules) and `--tier auto` or `confirm` on a
+  report-only rule (`trash`, `local-models`, `claude-vm`, `codex-db`, `sandbox-outputs`) are refused.
+  Such settings already in the config are ignored and listed by `rules` and `scan`; before, promoting
+  `trash` made it vanish from the report. `config set` on your own rule now says when it stays at confirm
+  because it reaches into a personal folder.
 
 ## [0.2.0] - 2026-10-11
 

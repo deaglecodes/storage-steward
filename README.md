@@ -213,6 +213,9 @@ The policy lives in `~/.config/storage-steward/config.json`:
   whatever a rule's tier says. Rules there are capped at `confirm`.
 - A broken config file never breaks a hook. It pauses deletes until you fix it (`scan` says why), because
   a keep list that can't be read can't protect anything. A typo in one rule switches that rule off.
+- `config set` refuses a setting that would change nothing: `--idle` for a rule that isn't age-based, or
+  `--tier auto`/`confirm` for a report-only rule such as `trash`. Found in the file, such a setting is
+  ignored and `rules` says so.
 
 ## Commands
 
