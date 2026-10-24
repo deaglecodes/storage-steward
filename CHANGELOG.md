@@ -20,6 +20,12 @@ release workflow publishes each version's section below as its GitHub release no
   invalid byte (a write cut short by a full disk), used to stop the whole report; now those lines are
   skipped, the rest is totalled, and `report` says how many it skipped.
 
+### Project
+
+- The test suite gives the same result whatever the free space on the machine running it. On a nearly
+  full disk (the machines this tool is for) four tests failed, while CI, whose runners always have room,
+  passed. A guard test keeps it that way.
+
 ## [0.2.0] - 2026-10-11
 
 The first release since the original Claude Code version. It works with any coding agent, lets you set
