@@ -3,6 +3,7 @@ import collections
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -435,6 +436,9 @@ GIT_ISOLATED = ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "maintenance.
                 "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "init.defaultBranch=main"]
 
 
+SUBMODULE_OK = ["-c", "protocol.file.allow=always"]     # git refuses local submodule URLs by default
+
+
 def git(d: Path, *args):
     subprocess.run(["git", "-C", str(d), *GIT_ISOLATED, *args], check=True, capture_output=True)
 
@@ -667,6 +671,53 @@ class RuleSafetyTests(SafetySandbox):
         self.assertTrue(local.exists(), "a repo's own branches go with it")
         self.assertTrue(stashed.exists(), "so do its stashes")
         self.assertFalse(pushed.exists(), "everything is on the remote: safe")
+
+    def test_submodules_keep_a_worktree(self):
+        lib = repo(self.home / "code/lib")
+        main = repo(self.home / "code/main")
+        git(main, *SUBMODULE_OK, "submodule", "add", "-q", str(lib), "lib")
+        git(main, "commit", "-qm", "lib")
+        base = self.home / ".claude/worktrees"
+        linked = worktree(main, base / "linked")
+        git(linked, *SUBMODULE_OK, "submodule", "update", "--init", "-q")
+        git(linked / "lib", "commit", "-q", "--allow-empty", "-m", "only here")    # pushed nowhere
+        only = subprocess.run(["git", "-C", str(linked / "lib"), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        git(linked, "commit", "-qam", "bump lib")        # the branch survives in main; lib's commit doesn't
+        clone = base / "clone"                           # a standalone repo, every commit pushed
+        subprocess.run(["git", *GIT_ISOLATED, *SUBMODULE_OK, "clone", "-q", "--recurse-submodules", str(main),
+                        str(clone)], check=True, capture_output=True)
+        git(clone / "lib", "branch", "idea")             # a submodule branch lives only in clone/.git/modules
+        gone = worktree(main, base / "gone")
+        git(gone, *SUBMODULE_OK, "submodule", "update", "--init", "-q")
+        git(gone, "submodule", "deinit", "-q", "-f", "lib")    # checkout emptied; its repository stays
+        nested = worktree(main, base / "nested")
+        repo(nested / "vendor")                          # added as it is, it keeps its own .git folder
+        git(nested, "submodule", "add", "-q", str(lib), "vendor")
+        git(nested, "commit", "-qm", "vendor")
+        bare = worktree(main, base / "bare")             # submodule never initialized: nothing of lib here
+        for d in (linked, clone, gone, nested, bare):
+            age_tree(d, 30)
+        self.run_cli("sweep", "--tier", "confirm", "--only", "agent-worktrees", "--yes")
+        self.assertTrue(linked.exists(), "git worktree remove refuses worktrees with submodules too")
+        git(linked / "lib", "cat-file", "-e", only)
+        self.assertTrue((main / ".git/worktrees/linked").exists())
+        self.assertTrue(clone.exists(), "a submodule's own branches go with the repo")
+        self.assertTrue(gone.exists(), "a deinitialized submodule's repository is still in the git data")
+        self.assertTrue((nested / "vendor/.git").is_dir(), "a submodule repository inside the checkout")
+        self.assertFalse(bare.exists())
+
+    def test_forgetting_a_worktree_never_drops_submodule_repositories(self):
+        main = repo(self.home / "code/main")
+        wt = worktree(main, self.home / "wt")
+        admin = os.path.realpath(main / ".git/worktrees/wt")
+        gitfile = os.path.realpath(wt / ".git")
+        mk(Path(admin) / "modules/lib/HEAD")             # an initialized submodule's repository
+        shutil.rmtree(wt)
+        self.assertFalse(steward.rules.forget_worktree(admin, gitfile))
+        self.assertTrue(os.path.exists(admin))
+        shutil.rmtree(Path(admin) / "modules")
+        self.assertTrue(steward.rules.forget_worktree(admin, gitfile))
 
     def test_stale_deps_need_a_provably_idle_project(self):
         sub = self.home / "code/sub"

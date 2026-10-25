@@ -35,6 +35,10 @@ across several projects on a disk that stayed 2–5% free, and agents did the bi
   worktrees were the single largest leak on the test machine (72 GB across 21 worktrees in one repo),
   and agents removed them by hand, some with `git worktree remove --force`. The rule now checks every
   project under home that Claude Code lists in `~/.claude.json`, with the same git-proven-clean test.
+- **Agent worktrees with submodules are kept.** A submodule's own commits, branches and stashes live in
+  the worktree's git data (`.git/worktrees/<name>/modules`, or the repo's own `.git/modules`), and git's
+  checks on the enclosing checkout don't see them, so a sweep could delete the only copy of a submodule
+  commit. These worktrees are now reported as kept, as `git worktree remove` refuses them too.
 - After removing a linked worktree, the sweep drops that worktree's entry in its main repo (what
   `git worktree prune` does, for this worktree only), so its branch can be checked out again. The docs
   used to tell you to run `git worktree prune`, which also forgets every other worktree whose folder is

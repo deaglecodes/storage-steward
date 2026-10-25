@@ -254,7 +254,8 @@ storage-steward never:
 - deletes anything written in the last hour (re-checked just before each delete)
 - touches the running session (`CLAUDE_CODE_SESSION_ID`) or its desktop sandbox
 - removes a worktree unless git shows nothing would be lost: no uncommitted or untracked files, no ignored
-  files beyond build output (an ignored `.env` counts as yours), and no commits that exist on no branch
+  files beyond build output (an ignored `.env` counts as yours), no commits that exist on no branch, and
+  no submodule repositories (git can't vouch for their commits from the enclosing checkout)
 - follows a symlink outside its folder, or deletes anything outside its rule's root, however the path is
   spelled (guards compare files by identity, so case, `..` and `//` don't matter)
 - deletes your Cowork `outputs/` or `uploads/`

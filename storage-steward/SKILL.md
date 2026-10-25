@@ -143,7 +143,7 @@ The script refuses to touch:
 - the current session (the session id from the hook, or `CLAUDE_CODE_SESSION_ID`/`GEMINI_SESSION_ID`)
   and its desktop sandbox
 - worktrees unless git shows nothing would be lost (no uncommitted, untracked or non-build ignored files,
-  no commits on no branch)
+  no commits on no branch, no submodules)
 - anything inside Documents, Desktop, Downloads, Pictures, Movies or Music during an automatic sweep
 - credentials, settings, memory and skills
 - anything at all while the user's config file can't be read

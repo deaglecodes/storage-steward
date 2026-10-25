@@ -352,12 +352,30 @@ def worktree_risk(wt: Path) -> Optional[str]:
                 parts = line[3:].strip('"').rstrip("/").split("/")
                 if not (set(parts) & REGENERABLE or parts[-1].endswith(".pyc")):
                     return f"ignored file {parts[-1]}"
+            if _has_submodules(repo):
+                return "submodules"
             risk = _unshared_commits(repo)
             if risk:
                 return risk
         except (OSError, subprocess.TimeoutExpired):
             return "git unavailable"
     return None
+
+
+def _has_submodules(repo: Path) -> bool:
+    """Whether submodule repositories live in this checkout or its git data. Their own commits, branches and
+    stashes can exist nowhere else, and git checks only the enclosing checkout (`git worktree remove`
+    refuses these worktrees too)."""
+    try:
+        with os.scandir(_git_dir(repo) / "modules") as it:     # absorbed: <git dir>/modules/<name>
+            if any(it):
+                return True
+    except OSError:
+        pass
+    if not (repo / ".gitmodules").exists():
+        return False
+    st = _git(repo, "submodule", "status")                       # "-" marks one that was never initialized
+    return bool(st.returncode) or any(not line.startswith("-") for line in st.stdout.splitlines())
 
 
 def _unshared_commits(repo: Path) -> Optional[str]:
@@ -419,8 +437,9 @@ def _admin_dirs(ctx, wt: Path) -> Tuple[Tuple[str, str], ...]:
 def forget_worktree(admin: str, gitfile: str) -> bool:
     """What `git worktree prune` does, for this one worktree only: drop its admin dir once the checkout is
     gone. Plain prune also forgets every other worktree whose folder is missing right now (one on an
-    unmounted drive, say), orphaning its index and any commits on no branch."""
-    if os.path.lexists(gitfile) or os.path.lexists(os.path.join(admin, "locked")):
+    unmounted drive, say), orphaning its index and any commits on no branch. An admin dir that holds
+    submodule repositories (modules/) is kept: their commits may exist nowhere else."""
+    if any(os.path.lexists(p) for p in (gitfile, os.path.join(admin, "locked"), os.path.join(admin, "modules"))):
         return False
     try:
         with open(os.path.join(admin, "gitdir")) as f:
