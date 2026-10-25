@@ -36,7 +36,6 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
-from xml.sax.saxutils import escape as xml_escape
 
 # Recognizes our hook commands in any agent's config: the quoted form older installs wrote
 # (python3 '/p/steward.py' hook stop) and the shlex form written now (python3 /p/steward.py hook stop).
@@ -586,6 +585,7 @@ def _args(script: Path) -> List[str]:
 
 
 def _plist(script: Path) -> str:
+    from xml.sax.saxutils import escape as xml_escape   # here, not at the top: it pulls in urllib, slowing every hook
     args = "".join(f"<string>{xml_escape(a)}</string>" for a in _args(script))
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

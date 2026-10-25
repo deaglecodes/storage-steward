@@ -3,6 +3,79 @@
 All notable changes to storage-steward. Versions follow [Semantic Versioning](https://semver.org); the
 release workflow publishes each version's section below as its GitHub release notes.
 
+## [Unreleased]
+
+What two weeks of real use showed: the steward's hooks ran in over a thousand Claude Code sessions
+across several projects on a disk that stayed 2–5% free, and agents did the biggest cleanups by hand.
+
+### Added
+
+- `where` lists the biggest folders in your home, two levels deep, from one `du` pass (about a minute on
+  a full disk, 10 lines). It reports only. When `scan` found little on a full disk, agents explored with
+  raw `du` themselves; in every large cleanup the space was in the user's own folders (footage, build
+  output, big repos). `scan` now points to `where` when the disk is low.
+
+### Fixed
+
+- **`report` overstated what native prunes freed.** `uv cache prune`, `pnpm store prune` and the others
+  were credited with every byte of free space the disk gained while they ran, including other
+  processes' deletes and APFS freeing space in the background, and even when the prune failed. One
+  machine's report said uv freed 77.1 GB in 17 days from a cache that is 6.9 GB. A prune now counts
+  only space that both left the folder it prunes and came back as free disk, and only when it succeeds.
+  `docker builder prune`, which frees space inside Docker's VM disk, is counted as 0. Existing ledger
+  lines keep their old numbers.
+- **`uv cache prune` no longer stalls the sweep for a minute.** uvx-launched MCP servers hold uv's cache
+  lock while they run, and uv waits up to 5 minutes for it, so every sweep spent 60 seconds blocked
+  before giving up. The prune now waits 5 seconds (`UV_LOCK_TIMEOUT`) and tries again on a later sweep.
+- **A disk that stays low no longer triggers a sweep after every agent turn.** Low disk used to skip the
+  3-hour throttle entirely, so for days a full sweep (native prunes and git checks included) followed
+  every turn of every session and subagent. While disk is low, sweeps now run at most every 15 minutes.
+- **Agent worktrees are found in every project.** The Claude desktop app makes a worktree per session in
+  `<repo>/.claude/worktrees`, and `agent-worktrees` only looked there for the folder it ran from. Those
+  worktrees were the single largest leak on the test machine (72 GB across 21 worktrees in one repo),
+  and agents removed them by hand, some with `git worktree remove --force`. The rule now checks every
+  project under home that Claude Code lists in `~/.claude.json`, with the same git-proven-clean test.
+- **Agent worktrees with submodules are kept.** A submodule's own commits, branches and stashes live in
+  the worktree's git data (`.git/worktrees/<name>/modules`, or the repo's own `.git/modules`), and git's
+  checks on the enclosing checkout don't see them, so a sweep could delete the only copy of a submodule
+  commit. These worktrees are now reported as kept, as `git worktree remove` refuses them too.
+- After removing a linked worktree, the sweep drops that worktree's entry in its main repo (what
+  `git worktree prune` does, for this worktree only), so its branch can be checked out again. The docs
+  used to tell you to run `git worktree prune`, which also forgets every other worktree whose folder is
+  missing at that moment, say on an unplugged drive, and orphans its index and detached commits.
+- The low-disk warning stamps (one file per session) are cleared once they're older than the 6-hour
+  warning interval. They used to pile up in `~/.cache/storage-steward` forever.
+- `scan --only RULE --paths` lists every path those rules would remove. It used to stop after 40 and
+  suggest `--only RULE` even when one was given, so a confirm sweep could remove paths you were never
+  shown. Without `--only`, the listing still stops at 40 and names the rules it left out.
+- `config set` no longer reports "saved" for a setting that changes nothing. `--idle` on a rule that
+  isn't age-based (`pnpm-store`, `simulators`, the report-only rules) and `--tier auto` or `confirm` on a
+  report-only rule (`trash`, `local-models`, `claude-vm`, `codex-db`, `sandbox-outputs`) are refused.
+  Such settings already in the config are ignored and listed by `rules` and `scan`; before, promoting
+  `trash` made it vanish from the report. `config set` on your own rule now says when it stays at confirm
+  because it reaches into a personal folder.
+- `report` no longer crashes on a damaged `ledger.jsonl`. A line whose numbers aren't numbers, or a stray
+  invalid byte (a write cut short by a full disk), used to stop the whole report; now those lines are
+  skipped, the rest is totalled, and `report` says how many it skipped.
+
+### Changed
+
+- SKILL.md tells agents to write the command out or define `S` as a shell function. Its old shorthand
+  invited `S="python3 …"; $S scan`, which fails in zsh, the macOS default shell; agents hit that error
+  in 2 of the 6 sessions that loaded the skill.
+- SKILL.md tells agents never to `git worktree remove --force` an agent worktree: if git refuses, the
+  worktree holds work, so they ask the user.
+- The low-disk warning says "before writing over 1 GB" instead of "before big writes". Agents ran a full
+  scan before a 170 MB render.
+- Hooks start about 10 ms sooner (70 ms instead of 80): the XML module only the installer needs is no
+  longer imported on every hook.
+
+### Project
+
+- The test suite gives the same result whatever the free space on the machine running it. On a nearly
+  full disk (the machines this tool is for) four tests failed, while CI, whose runners always have room,
+  passed. A guard test keeps it that way.
+
 ## [0.2.0] - 2026-10-11
 
 The first release since the original Claude Code version. It works with any coding agent, lets you set

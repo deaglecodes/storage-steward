@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import fnmatch
 import glob
+import json
 import math
 import os
 import re
@@ -35,6 +36,7 @@ REGENERABLE = DEP_DIRS | {"target", "dist", "build", "out", ".cache", "__pycache
                           ".mypy_cache", ".ruff_cache", ".gradle", ".tox", "coverage", ".nyc_output", ".DS_Store",
                           ".eslintcache"}
 KEEP_GLOB_MAX = 2000   # keep globs matching more than this are checked by name only (no identity lookups)
+NATIVE_LOCK_WAIT = "5"  # seconds a native prune waits for a cache lock a running tool holds, then skips
 Node = Tuple[int, int]
 
 
@@ -45,6 +47,9 @@ class Item:
     root: str               # deletion guard: path must sit strictly inside root
     note: str = ""
     cmd: Optional[List[str]] = None
+    measure: str = ""       # native command: the dir it prunes; only its shrinkage counts as freed
+    env: Optional[Dict[str, str]] = None      # native command: extra environment
+    forget: Tuple[Tuple[str, str], ...] = ()  # linked worktrees: (git admin dir, its .git file) to drop once gone
 
 
 @dataclass
@@ -158,10 +163,11 @@ def which(ctx, tool: str) -> Optional[str]:
     return shutil.which(tool) if ctx.real_home else None
 
 
-def native(ctx, tool: str, args: List[str], measure: Optional[Path], note: str) -> Iterable[Item]:
+def native(ctx, tool: str, args: List[str], measure: Optional[Path], note: str,
+           env: Optional[Dict[str, str]] = None) -> Iterable[Item]:
     exe = which(ctx, tool)
     if exe and (measure is None or measure.exists()):
-        yield Item("", 0, "", note, cmd=[exe] + args)
+        yield Item("", 0, "", note, cmd=[exe] + args, measure=str(measure or ""), env=env)
 
 
 # ---------------------------------------------------------------- auto tier
@@ -264,7 +270,9 @@ def pip_cache(ctx, days):
 def uv_cache(ctx, days):
     d = ctx.home / ".cache/uv"
     if which(ctx, "uv"):
-        yield from native(ctx, "uv", ["cache", "prune", "--quiet"], d, "native prune")
+        # uvx-launched MCP servers hold the cache lock for hours; without a limit uv waits 5 minutes for it
+        yield from native(ctx, "uv", ["cache", "prune", "--quiet"], d, "native prune",
+                          env={"UV_LOCK_TIMEOUT": NATIVE_LOCK_WAIT})
     else:  # sandbox / no uv: age-based fallback on cache buckets
         yield from idle_items(ctx, d, days * DAY, depth=2)
 
@@ -276,7 +284,8 @@ def pnpm_store(ctx, days):
 
 
 def brew(ctx, days):
-    yield from native(ctx, "brew", ["cleanup", f"--prune={max(1, int(days))}", "-q"], None, "native cleanup")
+    cache = next((d for d in (ctx.home / "Library/Caches/Homebrew", ctx.home / ".cache/Homebrew") if d.is_dir()), None)
+    yield from native(ctx, "brew", ["cleanup", f"--prune={max(1, int(days))}", "-q"], cache, "native cleanup")
 
 
 def codex_tmp(ctx, days):
@@ -343,12 +352,30 @@ def worktree_risk(wt: Path) -> Optional[str]:
                 parts = line[3:].strip('"').rstrip("/").split("/")
                 if not (set(parts) & REGENERABLE or parts[-1].endswith(".pyc")):
                     return f"ignored file {parts[-1]}"
+            if _has_submodules(repo):
+                return "submodules"
             risk = _unshared_commits(repo)
             if risk:
                 return risk
         except (OSError, subprocess.TimeoutExpired):
             return "git unavailable"
     return None
+
+
+def _has_submodules(repo: Path) -> bool:
+    """Whether submodule repositories live in this checkout or its git data. Their own commits, branches and
+    stashes can exist nowhere else, and git checks only the enclosing checkout (`git worktree remove`
+    refuses these worktrees too)."""
+    try:
+        with os.scandir(_git_dir(repo) / "modules") as it:     # absorbed: <git dir>/modules/<name>
+            if any(it):
+                return True
+    except OSError:
+        pass
+    if not (repo / ".gitmodules").exists():
+        return False
+    st = _git(repo, "submodule", "status")                       # "-" marks one that was never initialized
+    return bool(st.returncode) or any(not line.startswith("-") for line in st.stdout.splitlines())
 
 
 def _unshared_commits(repo: Path) -> Optional[str]:
@@ -371,17 +398,79 @@ def _unshared_commits(repo: Path) -> Optional[str]:
     return None
 
 
+def claude_projects(ctx) -> List[Path]:
+    """Main checkouts of the projects Claude Code has worked in (from ~/.claude.json), inside home."""
+    try:
+        with open(ctx.home / ".claude.json", errors="replace") as f:
+            projects = json.load(f).get("projects")
+    except (OSError, ValueError, AttributeError, RecursionError):
+        return []
+    found: List[Path] = []
+    for p in projects if isinstance(projects, dict) else ():
+        try:            # one odd key (a NUL, a lone surrogate) must not hide every other project
+            if not isinstance(p, str) or not os.path.isabs(p):
+                continue
+            main = Path(p.split(f"{os.sep}.claude{os.sep}worktrees{os.sep}")[0])   # a session's worktree -> its repo
+            if os.path.realpath(main).startswith(str(ctx.home) + os.sep) and main not in found:
+                found.append(main)
+        except (OSError, ValueError):
+            continue
+    return found
+
+
+def _admin_dirs(ctx, wt: Path) -> Tuple[Tuple[str, str], ...]:
+    """For each linked worktree in wt: the main repo's admin dir for it, and the .git file it records."""
+    out: List[Tuple[str, str]] = []
+    for repo in _checkouts(wt) or []:
+        gd = _git_dir(repo)
+        if gd == repo / ".git" or not gd.is_dir():       # a standalone repo has nobody to tell
+            continue
+        admin = os.path.realpath(gd)
+        if os.path.basename(os.path.dirname(admin)) != "worktrees":
+            continue                                     # not a worktree's admin dir
+        if not ctx.real_home and not admin.startswith(str(ctx.home) + os.sep):
+            continue                                     # a sandbox never touches a repo outside it
+        out.append((admin, os.path.realpath(repo / ".git")))
+    return tuple(out)
+
+
+def forget_worktree(admin: str, gitfile: str) -> bool:
+    """What `git worktree prune` does, for this one worktree only: drop its admin dir once the checkout is
+    gone. Plain prune also forgets every other worktree whose folder is missing right now (one on an
+    unmounted drive, say), orphaning its index and any commits on no branch. An admin dir that holds
+    submodule repositories (modules/) is kept: their commits may exist nowhere else."""
+    if any(os.path.lexists(p) for p in (gitfile, os.path.join(admin, "locked"), os.path.join(admin, "modules"))):
+        return False
+    try:
+        with open(os.path.join(admin, "gitdir")) as f:
+            recorded = f.read().strip()
+    except (OSError, ValueError):
+        return False
+    target = recorded if os.path.isabs(recorded) else os.path.join(admin, recorded)   # worktree.useRelativePaths
+    if not recorded or os.path.realpath(target) != gitfile:
+        return False                                     # git now points this entry somewhere else
+    shutil.rmtree(admin, ignore_errors=True)
+    return not os.path.lexists(admin)
+
+
 def agent_worktrees(ctx, days):
     roots = [ctx.home / ".claude/worktrees", ctx.home / ".codex/worktrees", ctx.home / ".cursor/worktrees"]
     if ctx.cwd:
         roots += [ctx.cwd / ".claude/worktrees", ctx.cwd / ".worktrees"]
+    # the Claude desktop app makes <repo>/.claude/worktrees/<name> per session, in every project, wherever we run
+    roots += [p / ".claude/worktrees" for p in claude_projects(ctx)]
+    seen: Set[str] = set()
     for root in roots:
+        if os.path.realpath(root) in seen:
+            continue
+        seen.add(os.path.realpath(root))
         for it in idle_items(ctx, root, days * DAY):
             risk = worktree_risk(Path(it.path))
             if risk:
                 ctx.kept.append(("agent-worktrees", it.size, risk))
                 continue
             it.note = "clean"
+            it.forget = _admin_dirs(ctx, Path(it.path))
             yield it
 
 

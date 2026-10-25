@@ -5,6 +5,7 @@
   scan        dry run: what a sweep would reclaim, by tier (<= ~15 lines)
   sweep       reclaim auto tier; add --tier confirm --yes [--only RULE] after the user agrees
   report      total reclaimed so far (ledger)
+  where       the biggest folders in home, two levels deep (report only; ~1 min on a full disk)
   hook EVENT  hook entry point for any agent: prompt | stop | session-end  [--agent NAME]
   install     link the skill + add hooks for detected agents (Claude Code, Codex, Cursor, Gemini CLI)
               [--agents LIST] [--schedule]; uninstall removes them
@@ -20,6 +21,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import math
 import os
 import shutil
 import stat
@@ -43,7 +45,10 @@ CRITICAL_FREE_BYTES = 5 * GIB      # skip probation when this tight
 MIN_IDLE = HOUR                    # never touch anything written in the last hour
 PROBATION = 7 * DAY                # default second-chance probation (config: probation_days)
 SWEEP_INTERVAL = 3 * HOUR          # default hook sweep interval (config: sweep_every_hours)
+LOW_SWEEP_INTERVAL = HOUR / 4      # while disk is low: sooner than that, but not after every agent turn
 WARN_INTERVAL = 6 * HOUR           # low-disk warning at most this often per session
+WHERE_TOP = 8                      # `where` lists this many of home's biggest folders
+WHERE_TIMEOUT = 300                # seconds `where` gives du
 SENTINELS = 64                     # files armed per cache entry
 REMOVED_LOG_MAX = 1 << 20          # removed.log keeps roughly the newest 1 MB of entries
 MARK = "storage-steward"           # state dir name (~/.cache/storage-steward)
@@ -305,14 +310,30 @@ def collect(ctx, tiers, only, apply, skip_probation):
     return out
 
 
-def run_cmd(cmd):
+def run_cmd(cmd, env=None):
     # native prunes can wait on a lock held by long-running tools (e.g. uv-based MCP servers);
     # give up quickly rather than holding the sweep lock for minutes
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
+                           env={**os.environ, **env} if env else None)
         return p.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def run_native(ctx, item: Item):
+    """Run a tool's own prune and return (ok, bytes it freed). Only space that both left the folder it
+    prunes and came back as free disk counts: free space alone also rises with whatever other processes
+    delete meanwhile, and the folder's shrinkage alone counts blocks still shared with clones (uv's venvs).
+    With no folder to measure (docker frees space inside its VM disk), nothing is counted."""
+    if not item.measure:
+        return run_cmd(item.cmd, item.env), 0
+    before = ctx.stats(item.measure)[0]
+    free0 = free_space(ctx)[0]
+    if not run_cmd(item.cmd, item.env):
+        return False, 0
+    shrunk = max(0, before - ctx.stats(item.measure)[0])
+    return True, min(shrunk, max(0, free_space(ctx)[0] - free0))
 
 
 def remove(ctx, item: Item, tier: str = "auto") -> int:
@@ -380,9 +401,7 @@ def sweep(ctx, tiers, only=None, source="manual", skip_probation=None):
         got = 0
         for it in items:
             if it.cmd:
-                u0 = shutil.disk_usage(ctx.home).free if ctx.real_home else 0
-                ok = run_cmd(it.cmd)
-                n = max(0, shutil.disk_usage(ctx.home).free - u0) if ctx.real_home else 0
+                ok, n = run_native(ctx, it)
                 got += n
                 if ok:
                     logged(rule.id, n, "$ " + " ".join(it.cmd))
@@ -391,6 +410,9 @@ def sweep(ctx, tiers, only=None, source="manual", skip_probation=None):
                 got += n
                 if n or not os.path.lexists(it.path):
                     logged(rule.id, n, it.path)
+                if not os.path.lexists(it.path):
+                    for admin, gitfile in it.forget:      # git forgets the removed worktree, and only it
+                        rules.forget_worktree(admin, gitfile)
         if got:
             by_rule[rule.id] = got
             freed += got
@@ -416,7 +438,7 @@ def tilde(ctx, path: str) -> str:
     return "~" + path[len(h):] if path == h or path.startswith(h + os.sep) else path
 
 
-PATHS_MAX = 40
+PATHS_MAX = 40      # `scan --paths` without --only stops here; with --only every path is listed
 
 
 def cmd_scan(ctx, a):
@@ -424,11 +446,14 @@ def cmd_scan(ctx, a):
     results = collect(ctx, tiers, set(a.only or []), False, a.no_probation)
     if getattr(a, "paths", False):
         rows = [(r.id, tier, i) for r, tier, its, _p in results for i in sorted(its, key=lambda i: -i.size)]
-        for rid, tier, i in rows[:PATHS_MAX]:
+        shown = rows if a.only else rows[:PATHS_MAX]     # named rules are what the user approves: hide nothing
+        for rid, tier, i in shown:
             what = " ".join(i.cmd) if i.cmd else tilde(ctx, i.path)
             print(f"{rid:<22} {tier:<7} {human(i.size):>9}  {what}")
-        if len(rows) > PATHS_MAX:
-            print(f"... {len(rows) - PATHS_MAX} more (narrow with --only RULE)")
+        if len(rows) > len(shown):
+            names = sorted({rid for rid, _, _ in rows[len(shown):]})
+            more = ", ".join(names[:4]) + (", ..." if len(names) > 4 else "")
+            print(f"... {len(rows) - len(shown)} more in {more} (scan --only RULE --paths lists all of them)")
         if not rows:
             print("nothing to list")
         return 0
@@ -473,6 +498,8 @@ def cmd_scan(ctx, a):
         print(f"config problem: {err} (steward.py config show)")
     if ctx.policy.paused:
         print("deletes paused until the config is fixed; nothing will be removed")
+    if is_low(free, total, ctx):
+        print("still low after this? the rest is in your own folders: `where` lists the biggest (report only)")
     tip = retention_tip(ctx)
     if tip:
         print(tip)
@@ -540,20 +567,30 @@ def cmd_sweep(ctx, a):
     return 0
 
 
+def _number(v) -> bool:
+    """A real, finite number: JSON true/false, NaN and Infinity don't count."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
 def cmd_report(ctx, a):
-    rows = []
+    path, rows, bad = ctx.state / "ledger.jsonl", [], 0
     try:
-        for line in (ctx.state / "ledger.jsonl").read_text().splitlines():
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(row, dict) and isinstance(row.get("by"), dict) and "freed" in row and "t" in row:
-                rows.append(row)
+        lines = path.read_text(errors="replace").splitlines()    # a mangled byte spoils its line, not the file
     except OSError:
-        pass
+        lines = []
+    for line in filter(str.strip, lines):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            row = None
+        if isinstance(row, dict) and _number(row.get("t")) and _number(row.get("freed")) \
+                and isinstance(row.get("by"), dict) and all(map(_number, row["by"].values())):
+            rows.append(row)
+        else:
+            bad += 1
+    note = f"skipped {bad} unreadable line{'s' if bad != 1 else ''} in {tilde(ctx, str(path))}" if bad else ""
     if not rows:
-        print("nothing reclaimed yet")
+        print("nothing reclaimed yet" + (f" ({note})" if note else ""))
         return 0
     total = sum(r["freed"] for r in rows)
     days = max(1.0, (rows[-1]["t"] - rows[0]["t"]) / DAY)
@@ -564,6 +601,58 @@ def cmd_report(ctx, a):
     top = ", ".join(f"{k} {human(v)}" for k, v in sorted(by.items(), key=lambda x: -x[1])[:5])
     print(f"reclaimed {human(total)} over {days:.0f}d in {len(rows)} sweeps ({top})")
     print(f"every removed path: {tilde(ctx, str(ctx.state / 'removed.log'))}")
+    if note:
+        print(note)
+    return 0
+
+
+def _loose_files(d: str, sizes: dict, depth: int, dev: int):
+    """Add the files directly in d (and in its subfolders, while depth > 1): du -d lists folders only.
+    Like du -x, it stays on home's disk, so a mounted network share can't stall it."""
+    try:
+        entries = list(os.scandir(d))
+    except OSError:
+        return
+    for e in entries:
+        try:
+            st = e.stat(follow_symlinks=False)
+            if e.is_dir(follow_symlinks=False):
+                if depth > 1 and st.st_dev == dev:
+                    _loose_files(e.path, sizes, depth - 1, dev)
+            else:
+                sizes[e.path] = st.st_blocks * 512
+        except OSError:
+            continue
+
+
+def cmd_where(ctx, a):
+    """The biggest folders (and files) in home, two levels deep, from one du pass. Report only."""
+    try:
+        p = subprocess.run(["du", "-kx", "-d", "2", str(ctx.home)], capture_output=True, text=True,
+                           errors="replace", timeout=WHERE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        print(f"du took over {WHERE_TIMEOUT // 60} min; ask the user which folders they know are big")
+        return 1
+    except OSError as e:
+        print(f"could not run du ({e.strerror or e})")
+        return 1
+    home, sizes = str(ctx.home), {}
+    for line in p.stdout.splitlines():           # unreadable folders only print to stderr; skip them
+        kb, _, path = line.partition("\t")
+        if kb.isdigit() and (path == home or path.startswith(home + os.sep)):
+            sizes[path] = int(kb) * 1024
+    if home not in sizes:
+        print("du gave no sizes" + (f": {p.stderr.strip().splitlines()[0]}" if p.stderr.strip() else ""))
+        return 1
+    _loose_files(home, sizes, 2, os.stat(home).st_dev)
+    top = sorted((s, q) for q, s in sizes.items() if q != home and os.sep not in q[len(home) + 1:])[::-1]
+    free, _ = free_space(ctx)
+    print(f"home: {human(sizes.get(home, 0))} used, {human(free)} free")
+    for size, q in top[: a.top]:
+        big = max(((s, k) for k, s in sizes.items() if os.path.dirname(k) == q), default=None)
+        inside = f"  (biggest inside: {os.path.basename(big[1])} {human(big[0])})" if big else ""
+        print(f"  {human(size):>9}  {tilde(ctx, q)}{inside}")
+    print("report only: sweeps never delete these; ask the user before removing anything here")
     return 0
 
 
@@ -636,7 +725,7 @@ def _hook(ctx, a, said):
                 except OSError:
                     pass        # disk full or odd state dir: warn anyway, just not throttled
             warning = (f"[storage-steward] disk low: {human(free)} free ({100 * free / total:.0f}%). "
-                       "Before big writes, run the storage-steward skill's scan.")
+                       "Before writing over 1 GB, run the storage-steward skill's scan.")
         said.append(1)
         _emit(a.agent, a.event, warning)
         return 0
@@ -670,10 +759,23 @@ def _hook(ctx, a, said):
             return 0  # another sweep is running
         free, total = free_space(ctx)
         stamp = ctx.state / "last-sweep"
-        if _stamp_due(stamp, ctx.sweep_interval, ctx.now) or is_low(free, total, ctx):
+        # a low disk can stay low for days: sweeping after every turn of every session then only burns IO
+        interval = min(ctx.sweep_interval, LOW_SWEEP_INTERVAL) if is_low(free, total, ctx) else ctx.sweep_interval
+        if _stamp_due(stamp, interval, ctx.now):
             _touch(stamp, ctx.now)
+            _forget_warnings(ctx)
             sweep(ctx, ("auto",), source=f"hook:{a.agent}:{a.event}")
     return 0
+
+
+def _forget_warnings(ctx):
+    """Drop per-session warning stamps old enough that they no longer hold back a warning."""
+    for p in ctx.state.glob("warned-*"):
+        try:
+            if ctx.now - p.stat().st_mtime >= WARN_INTERVAL:
+                p.unlink()
+        except OSError:
+            pass
 
 
 def _self_test(a, keys) -> str:
@@ -789,6 +891,8 @@ def main(argv=None):
             s.add_argument("--yes", action="store_true")
             s.add_argument("--dry-run", action="store_true")
     sub.add_parser("report")
+    s = sub.add_parser("where", help="the biggest folders in home (report only)")
+    s.add_argument("--top", type=int, default=WHERE_TOP)
     s = sub.add_parser("hook"); s.add_argument("event", choices=("prompt", "stop", "session-end"))
     s.add_argument("--agent", default="claude", choices=[x.key for x in agents.AGENTS] + ["scheduler"])
     s.add_argument("--foreground", action="store_true")
@@ -821,7 +925,8 @@ def main(argv=None):
     if getattr(a, "only", None):
         a.only = [x for o in a.only for x in o.split(",")]
     ctx = Ctx(a)
-    return {"status": cmd_status, "scan": cmd_scan, "sweep": cmd_sweep, "report": cmd_report, "hook": cmd_hook,
+    return {"status": cmd_status, "scan": cmd_scan, "sweep": cmd_sweep, "report": cmd_report, "where": cmd_where,
+            "hook": cmd_hook,
             "install": cmd_install, "uninstall": cmd_uninstall, "schedule": cmd_schedule,
             "rules": cmd_rules, "config": cmd_config}[a.cmd](ctx, a)
 

@@ -15,6 +15,8 @@ or $STORAGE_STEWARD_CONFIG. Every key is optional:
 Tiers: auto (hooks sweep it), confirm (ask first), info (report only), off (ignore the rule).
 A broken file never breaks a hook, and it fails closed: if the file or its keep list can't be read,
 deletes pause until it is fixed (scan says why); a rule whose override has a typo is switched off.
+A setting that can't take effect (an age for a rule that has none, deleting a report-only item) is
+refused by `config set` and, found in the file, ignored and reported.
 """
 from __future__ import annotations
 
@@ -31,6 +33,14 @@ TIERS = ("auto", "confirm", "info", "off")
 NUMBERS = {"sweep_every_hours": (0.25, 24 * 30), "warn_below_gb": (0, 10000),
            "warn_below_percent": (0, 50), "probation_days": (1, 90)}
 DEFAULTS = {"sweep_every_hours": 3.0, "warn_below_gb": 20.0, "warn_below_percent": 5.0, "probation_days": 7.0}
+# built-in info rules only size things up for the report: their items can't be deleted, whatever the tier
+REPORT_ONLY = {r.id for r in RULES if r.tier == "info"}
+DELETING = ("auto", "confirm")
+
+
+def ageless(rid: str) -> bool:
+    """A built-in rule that doesn't go by age (a native prune or a report-only size): idle_days does nothing."""
+    return rid in BUILTIN and BUILTIN[rid].days is None
 
 
 def path_for(home: Path, real_home: bool) -> Path:
@@ -152,6 +162,12 @@ class Policy:
             except (TypeError, ValueError):
                 self.errors.append(f"rules.{rid}.idle_days: must be a positive number; rule off until fixed")
                 return {"tier": "off"}
+        if "idle_days" in clean and ageless(rid):
+            del clean["idle_days"]
+            self.errors.append(f"rules.{rid}.idle_days: {rid} has no age setting; ignored")
+        if rid in REPORT_ONLY and clean.get("tier") in DELETING:
+            del clean["tier"]
+            self.errors.append(f"rules.{rid}.tier: {rid} is report-only and never deleted; ignored")
         return clean
 
     def _custom_specs(self) -> List[dict]:
@@ -217,6 +233,14 @@ def _save_raw(path: Path, data: dict):
     os.replace(tmp, path)
 
 
+def _capped(home: Path, customs: list, name: str) -> bool:
+    """Is the user's own rule `name` held at confirm because it reaches into a personal folder?"""
+    for spec in customs:
+        if isinstance(spec, dict) and spec.get("name") == name and not check_custom(home, spec):
+            return custom_rule(home, spec).capped
+    return False
+
+
 def edit(home: Path, real_home: bool, a) -> str:
     """Apply one `config` action and return a one-line summary."""
     path = path_for(home, real_home)
@@ -243,6 +267,12 @@ def edit(home: Path, real_home: bool, a) -> str:
         else:
             if a.tier is None and a.idle is None:
                 raise SystemExit("set needs --tier and/or --idle")
+            if a.rule in REPORT_ONLY and (a.idle is not None or a.tier in DELETING):
+                raise SystemExit(f"refusing: {a.rule} is report-only (storage-steward never deletes it); "
+                                 "only --tier info or --tier off change it")
+            if a.idle is not None and ageless(a.rule):
+                raise SystemExit(f"refusing: {a.rule} has no age setting, so --idle would change nothing; "
+                                 "change its --tier instead")
             ov = rules.setdefault(a.rule, {})
             if not isinstance(ov, dict):
                 ov = rules[a.rule] = {}
@@ -253,6 +283,8 @@ def edit(home: Path, real_home: bool, a) -> str:
             if a.idle is not None:
                 ov["idle_days"] = _days(a.idle)
             msg = f"{a.rule}: " + ", ".join(f"{k}={v}" for k, v in ov.items())
+            if ov.get("tier") == "auto" and _capped(home, customs, a.rule):
+                msg += " (capped to confirm: inside a personal folder)"
     elif act in ("keep", "unkeep"):
         keep = _section(data, "keep", list)
         for p in a.paths:

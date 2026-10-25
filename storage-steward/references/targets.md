@@ -22,7 +22,7 @@ conservative: "idle" means nothing in the subtree was modified for that long.
 | opencode-snapshots | `~/.local/share/opencode/snapshot/*`, `…/log/*` | idle >30d (logs >7d) | OpenCode undo snapshots, the equivalent of Claude's file-history. |
 | cursor-logs | `~/.cursor/logs/*` | idle >14d | Agent logs. |
 | npx-cache | `~/.npm/_npx/<hash>` | idle >14d, then second chance | Re-fetched by the next `npx`. Second chance keeps anything still being read. |
-| uv-cache | `~/.cache/uv` | `uv cache prune` (native) | Removes only unreachable objects. |
+| uv-cache | `~/.cache/uv` | `uv cache prune` (native) | Removes only unreachable objects. Waits at most 5 s for the cache lock (`UV_LOCK_TIMEOUT`): uvx-launched MCP servers hold it while they run, and the prune simply waits for a later sweep. |
 | pnpm-store | `~/Library/pnpm/store` | `pnpm store prune` (native) | Removes only unreferenced packages. |
 | pip-cache | `~/Library/Caches/pip`, `~/.cache/pip` | idle >30d | HTTP/wheel cache. |
 | brew | Homebrew cache | `brew cleanup --prune=14` | Old versions and downloads. Homebrew does this itself periodically. |
@@ -34,7 +34,7 @@ conservative: "idle" means nothing in the subtree was modified for that long.
 
 | Rule | Path(s) | Condition | Notes |
 |---|---|---|---|
-| agent-worktrees | `~/.claude/worktrees`, `~/.codex/worktrees`, `~/.cursor/worktrees`, `<cwd>/.claude/worktrees`, `<cwd>/.worktrees` | idle >7d and `git status --porcelain` empty | Commits live in the main repo, so removing a clean worktree loses nothing committed. Dirty ones are reported as "kept". Afterwards run `git worktree prune` in the main repo. |
+| agent-worktrees | `~/.claude/worktrees`, `~/.codex/worktrees`, `~/.cursor/worktrees`, `<project>/.claude/worktrees` for every project in `~/.claude.json` under home (the Claude desktop app makes one per session), `<cwd>/.claude/worktrees`, `<cwd>/.worktrees` | idle >7d and git proves nothing would be lost | Commits live in the main repo, so removing a clean worktree loses nothing committed. Dirty ones are reported as "kept", and so are ones with initialized submodules: a submodule's own commits, branches and stashes live in that worktree's git data, where they may be the only copy (`git worktree remove` refuses these too). The sweep then drops that worktree's entry in the main repo (`git worktree prune` for this one worktree; plain prune would also forget other worktrees whose folders are missing right now), so its branch can be checked out again. |
 | claude-transcripts | `~/.claude/projects/*/*.jsonl` (+ sibling dir) | idle >30d | Session history used by `--resume`. Better long-term fix: `install --retention N` sets `cleanupPeriodDays`. |
 | codex-sessions | `~/.codex/sessions/YYYY/MM/DD/*.jsonl`, `~/.codex/archived_sessions` | idle >30d | Codex keeps these forever (openai/codex #42648, #40371). |
 | gemini-history | `~/.gemini/tmp/*`, `~/.gemini/history/*` | idle >30d | Gemini CLI chats and checkpoint shadow repos. |
