@@ -148,7 +148,7 @@ uninstall, `python3 storage-steward/scripts/steward.py uninstall --purge` from y
 |---|---|---|
 | **While the agent works** | The skill gives agents five habits: one scratch folder per task; no background output allowed to grow without limit; APFS `cp -c` clones of `node_modules` for worktrees; a free-space check before writes over 1 GB; streaming instead of saving large intermediate files. | about 1.8k tokens, only when the skill loads |
 | **Every prompt** | A prompt hook (`UserPromptSubmit`, or `BeforeAgent` in Gemini) checks free space. It adds a warning only below max(20 GiB, 5%). Otherwise it prints nothing, or `{}` where the agent requires JSON. | 0 tokens, about 60 ms |
-| **After a session** | Stop/end hooks start a sweep of the **auto** tier in the background, at most every 3 hours (immediately when disk is low). Agents without hooks get the same sweep from an OS timer. | 0 tokens, the agent never waits |
+| **After a session** | Stop/end hooks start a sweep of the **auto** tier in the background, at most every 3 hours (every 15 minutes while disk is low). Agents without hooks get the same sweep from an OS timer. | 0 tokens, the agent never waits |
 | **When it matters** | Items in the **confirm** tier are listed with their sizes. Only the ones you approve are removed (`--only rule`). | your call |
 
 **Tiers**
@@ -158,7 +158,8 @@ uninstall, `python3 storage-steward/scripts/steward.py uninstall --purge` from y
   Codex/OpenCode/Cursor temp files and logs, stale npx and pip caches, Xcode DerivedData, updater leftovers,
   `$TMPDIR` entries older than 7 days (not ones holding a live socket), and the tools' own prune commands:
   `brew cleanup --prune=14`, `uv cache prune`, `pnpm store prune`.
-- **confirm** (needs your OK): transcripts and Codex sessions older than 30 days, clean agent worktrees,
+- **confirm** (needs your OK): transcripts and Codex sessions older than 30 days, clean agent worktrees
+  (including the ones the Claude desktop app leaves in `<repo>/.claude/worktrees`, in every project),
   `node_modules`/`.venv` of projects idle for 30+ days, old Playwright browsers, Docker build cache.
 - **info** (reported, never touched): local models, the Cowork VM image, Codex databases, your Cowork
   outputs, the Trash.
@@ -226,6 +227,7 @@ steward.py scan --paths           dry run, first 40 paths a sweep would remove (
 steward.py sweep                  reclaim the auto tier
 steward.py sweep --tier confirm --only RULE[,RULE] --yes
 steward.py report                 total reclaimed so far, and where the removal log is
+steward.py where                  the biggest folders in your home, two levels deep (report only)
 steward.py install [--agents LIST] [--schedule] [--retention DAYS] [--dry-run]
 steward.py uninstall [--purge]
 steward.py schedule install|uninstall|status

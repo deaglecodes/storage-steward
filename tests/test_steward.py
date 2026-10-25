@@ -950,6 +950,41 @@ class CliTests(SafetySandbox):
         self.assertIn("--only", out)
         self.assertTrue(f.exists())
 
+    def test_where_names_the_biggest_folders_and_deletes_nothing(self):
+        mk(self.home / "match footage/raw/clip.mov", 1 << 20)
+        blob = mk(self.home / "match footage/final cut.mov", 3 << 20)
+        mk(self.home / "small/x.txt", 4096)
+        loose = mk(self.home / "installer.dmg", 2 << 20)
+        code, out = self.run_cli("where")
+        self.assertEqual(code, 0)
+        lines = out.splitlines()
+        self.assertTrue(lines[0].startswith("home: "), out)
+        self.assertIn("~/match footage  (biggest inside: final cut.mov", lines[1],
+                      "biggest first, with what's inside it, files included")
+        self.assertIn("~/installer.dmg", out, "files at the top of home count too")
+        self.assertIn("report only", lines[-1])
+        self.assertTrue(blob.exists() and loose.exists())
+        _, out = self.run_cli("where", "--top", "1")
+        self.assertEqual(len(out.splitlines()), 3)
+
+    def test_where_says_when_du_cannot_answer(self):
+        slow = subprocess.TimeoutExpired("du", steward.WHERE_TIMEOUT)
+        empty = subprocess.CompletedProcess(["du"], 1, "", "du: illegal option -- a\nusage: du ...")
+        for effect, says in ((slow, "took over"), (OSError(2, "No such file"), "could not run du"),
+                             ([empty], "du gave no sizes: du: illegal option")):
+            with mock.patch.object(steward.subprocess, "run", side_effect=effect):
+                code, out = self.run_cli("where")
+            self.assertEqual(code, 1)
+            self.assertIn(says, out)
+
+    def test_scan_points_to_where_when_disk_stays_low(self):
+        self.disk = NEARLY_FULL
+        _, out = self.run_cli("scan")
+        self.assertIn("`where`", out)
+        self.disk = ROOMY
+        _, out = self.run_cli("scan")
+        self.assertNotIn("`where`", out)
+
     def test_version_is_consistent(self):
         buf = io.StringIO()
         with redirect_stdout(buf), self.assertRaises(SystemExit):
@@ -959,6 +994,125 @@ class CliTests(SafetySandbox):
         skill = (SCRIPTS.parent / "SKILL.md").read_text()
         self.assertIn(f'version: "{steward.__version__}"', skill.split("---")[1], "SKILL.md metadata")
         self.assertIn(f"## [{steward.__version__}]", (root / "CHANGELOG.md").read_text())
+
+
+class FieldUsageTests(SafetySandbox):
+    """What two weeks of real use on a nearly full disk showed (Claude Code sessions across many projects)."""
+
+    def state(self) -> Path:
+        d = self.home / ".cache/storage-steward"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def stamp(self, name: str, age_s: float) -> Path:
+        p = self.state() / name
+        p.touch()
+        os.utime(p, (NOW - age_s, NOW - age_s))
+        return p
+
+    def test_worktrees_are_found_in_every_claude_project(self):
+        main = repo(self.home / "code/my game")
+        wt = worktree(main, main / ".claude/worktrees/brave-otter")
+        age_tree(wt, 30)
+        offline = worktree(main, self.home / "drive/offline")        # its drive is unplugged during the sweep
+        git(offline, "commit", "-q", "--allow-empty", "--no-verify", "-m", "x")
+        git(offline, "checkout", "-q", "--detach")
+        os.rename(self.home / "drive", self.home / "unplugged")
+        away = repo(self.tmp / "elsewhere")              # a project outside home is never swept
+        far = worktree(away, away / ".claude/worktrees/far")
+        age_tree(far, 30)
+        (self.home / ".claude.json").write_text(json.dumps({"projects": {
+            str(main): {}, str(wt): {}, str(away): {}, "relative/path": {}, "/": {}}}))
+        _, out = self.run_cli("scan", "--only", "agent-worktrees", "--paths")    # no --cwd: run from anywhere
+        self.assertIn("~/code/my game/.claude/worktrees/brave-otter", out)
+        self.run_cli("sweep", "--tier", "confirm", "--only", "agent-worktrees", "--yes")
+        self.assertFalse(wt.exists())
+        self.assertTrue(far.exists(), "outside home")
+        admin = main / ".git/worktrees"
+        self.assertEqual(sorted(p.name for p in admin.iterdir()), ["offline"],
+                         "git forgets the removed worktree (its branch is free again), and only that one")
+        os.rename(self.home / "unplugged", self.home / "drive")
+        git(offline, "status")                           # still a working checkout once the drive is back
+
+    def test_a_sandbox_never_touches_a_repo_outside_it(self):
+        away = repo(self.tmp / "outside")
+        wt = worktree(away, self.home / ".claude/worktrees/x")
+        age_tree(wt, 30)
+        self.run_cli("sweep", "--tier", "confirm", "--only", "agent-worktrees", "--yes")
+        self.assertFalse(wt.exists())
+        self.assertTrue((away / ".git/worktrees/x").exists())
+
+    def test_a_broken_claude_json_only_skips_the_bad_parts(self):
+        main = repo(self.home / "code/app")
+        wt = worktree(main, main / ".claude/worktrees/old")
+        age_tree(wt, 30)
+        good = {str(main): {}, "/a\u0000b": {}, "\ud800": {}, "relative": {}}
+        for raw in ("{not json", "[]", '{"projects": 5}', '{"projects": {"5": 1}}', "[" * 100000,
+                    json.dumps({"projects": good})):
+            (self.home / ".claude.json").write_text(raw, errors="surrogatepass")
+            code, out = self.run_cli("scan", "--only", "agent-worktrees", "--paths")
+            self.assertEqual(code, 0, raw[:30])
+            self.assertNotIn("error", out, raw[:30])
+        self.assertIn("~/code/app/.claude/worktrees/old", out, "odd keys don't hide the good ones")
+
+    def sweep_uv(self, ok: bool = True, free_rise: int = 40 * GIB, envs=None):
+        """Sweep with a fake `uv cache prune` that empties part of the cache while free space rises by
+        free_rise (others' deletes, APFS); returns what the ledger credited to uv-cache."""
+        mk(self.home / ".cache/uv/archive-v0/old", 1 << 20)
+        mk(self.home / ".cache/uv/archive-v0/live", 1 << 20)
+
+        def fake(cmd, env=None):
+            (envs if envs is not None else []).append(env)
+            (self.home / ".cache/uv/archive-v0/old").unlink()
+            self.disk = (self.disk[0] + free_rise, self.disk[1])
+            return ok
+        with mock.patch.object(steward.rules, "which", lambda _c, t: "/fake/uv" if t == "uv" else None), \
+                mock.patch.object(steward, "run_cmd", fake):
+            self.run_cli("sweep", "--only", "uv-cache")
+        led = self.state() / "ledger.jsonl"
+        return json.loads(led.read_text().splitlines()[-1])["by"]["uv-cache"] if led.exists() else 0
+
+    def test_native_prune_counts_only_what_left_its_folder(self):
+        envs = []
+        got = self.sweep_uv(envs=envs)
+        self.assertEqual(envs, [{"UV_LOCK_TIMEOUT": "5"}], "a running uvx server's lock can't stall the sweep")
+        self.assertGreater(got, 0)
+        self.assertLessEqual(got, 1 << 21, "not the 40 GiB something else freed meanwhile")
+
+    def test_native_prune_counts_only_what_came_back_as_free_space(self):
+        self.assertEqual(self.sweep_uv(free_rise=0), 0, "the folder shrank but the disk gained nothing (clones)")
+
+    def test_a_failed_native_prune_counts_nothing(self):
+        self.assertEqual(self.sweep_uv(ok=False), 0, "a prune that gave up freed nothing")
+
+    def test_low_disk_sweeps_every_15_minutes_not_every_turn(self):
+        self.disk = NEARLY_FULL
+        junk = mk(self.home / ".claude/debug/old.txt", age_days=30)
+        self.stamp("last-sweep", 60)
+        self.run_cli("hook", "stop", "--foreground")
+        self.assertTrue(junk.exists(), "swept a minute ago: wait, even though disk is low")
+        self.stamp("last-sweep", steward.LOW_SWEEP_INTERVAL + 60)
+        self.run_cli("hook", "stop", "--foreground")
+        self.assertFalse(junk.exists())
+        self.disk = ROOMY
+        junk = mk(self.home / ".claude/debug/old2.txt", age_days=30)
+        self.stamp("last-sweep", steward.LOW_SWEEP_INTERVAL + 60)
+        self.run_cli("hook", "stop", "--foreground")
+        self.assertTrue(junk.exists(), "with room to spare the normal 3 h interval holds")
+
+    def test_old_warning_stamps_are_cleared(self):
+        old = self.stamp("warned-0a2eecaa-740a-4b83-95e6-f941d6c1d02c", 2 * DAY)
+        new = self.stamp("warned-41dbd77c-9fda-400e-bed4-e014683dfd17", 60)
+        self.run_cli("hook", "stop", "--foreground")
+        self.assertFalse(old.exists(), "one stamp per session used to pile up forever")
+        self.assertTrue(new.exists(), "still throttling this session's warning")
+
+    def test_hooks_do_not_import_what_only_install_needs(self):
+        probe = ("import sys; sys.path.insert(0, sys.argv[1]); import steward; "
+                 "print(sorted(m for m in ('urllib.request', 'xml.sax.saxutils') if m in sys.modules))")
+        out = subprocess.run([sys.executable, "-S", "-c", probe, str(SCRIPTS)],     # -S: no site hooks importing them
+                             capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout.strip(), "[]", "every hook pays for these imports")
 
 
 if __name__ == "__main__":

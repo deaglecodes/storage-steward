@@ -15,16 +15,21 @@ People end up cleaning by hand every day. This skill makes cleanup continuous an
 you are. Hooks or an OS timer do the recurring work at zero token cost. You prevent new leftovers while
 you work. Anything that might be user data goes to the user.
 
-`S` below means `python3 <this-skill-dir>/scripts/steward.py`. It uses only the Python standard library
-(3.9+), and its output is short (`scan` is about 15 lines). The table below is the complete interface, so
-there's no need for `--help` or to read the script source. `install` self-tests its own hooks.
+`S` below means `python3 <this-skill-dir>/scripts/steward.py`. Write the command out in full, or define a
+function first: `S() { python3 "<this-skill-dir>/scripts/steward.py" "$@"; }`. A string variable
+(`S="python3 …"; $S scan`) fails in zsh, the macOS default shell. The script uses only the Python standard
+library (3.9+), and its output is short (`scan` is about 15 lines). The table below is the complete
+interface, so there's no need for `--help` or to read the script source. `install` self-tests its own hooks.
 
 ## Keep it token-cheap
 
 Never explore disk usage with raw `du`, `find`, `ls -R` or `ncdu`. Their output is thousands of lines,
 and reading it costs more than the cleanup is worth. The script already knows the agent and dev-tool
 hotspots and summarizes them. One `scan` per task is enough, and `sweep` prints its own one-line result.
-Open `references/targets.md` only when someone asks why a path is safe or what a rule touches.
+If `scan` finds little but the disk is still low, the space is in the user's own folders (footage, build
+output, big repos). Run `S where` once instead of drilling down yourself: one `du` pass (about a minute
+on a full disk) and 10 lines of output. Open `references/targets.md` only when someone asks why a path is
+safe or what a rule touches.
 
 | Command | Output |
 |---|---|
@@ -34,6 +39,7 @@ Open `references/targets.md` only when someone asks why a path is safe or what a
 | `S sweep` | reclaims the auto tier, prints one line |
 | `S sweep --tier confirm --only RULE[,RULE] --yes` | reclaims named confirm-tier rules, only after the user agrees |
 | `S report` | total reclaimed so far, and where the per-path removal log is |
+| `S where` | the biggest folders in home, two levels deep (report only, never deleted) |
 | `S install [--agents auto] [--schedule]` / `S uninstall [--purge]` | turn automation on or off |
 | `S schedule install` | an OS timer only (launchd, systemd or cron), for agents without hooks |
 | `S rules` | the effective policy: every rule, its tier and age threshold, the keep list |
@@ -61,8 +67,8 @@ hooks in each agent's own format:
 
 - **Free-space check:** it adds a warning to context only when disk is low. Otherwise it prints nothing
   (or `{}` where the agent requires JSON), so it costs 0 tokens.
-- **Background sweep:** it runs detached, throttled to once every 3 hours (immediately when disk is low).
-  The agent never waits for it.
+- **Background sweep:** it runs detached, throttled to once every 3 hours (every 15 minutes while disk is
+  low). The agent never waits for it.
 - **Safe to repeat:** every edited file is backed up, and existing hooks from other tools are kept.
   `install` is idempotent. `uninstall` removes these hooks, the skill links and copy, and the timer;
   `--purge` also removes the user's policy and the removal log.
@@ -81,6 +87,7 @@ line. Run `S rules` first only if you need rule names.
 | "clear task output after 6 hours, not a day" | `S config set claude-task-output --idle 6h` |
 | "just delete old Codex sessions, don't ask" | `S config set codex-sessions --tier auto --idle 45d` |
 | "don't touch ~/models or any .mov file" | `S config keep ~/models '*.mov'` |
+| "offer finished agent worktrees sooner" | `S config set agent-worktrees --idle 2d` |
 | "also clean my ~/work/*/build folders weekly" | `S config add work-builds --path '~/work/*/build' --idle 7 --tier auto` |
 | "undo that" | `S config unset RULE` / `S config unkeep PATH` / `S config drop NAME` |
 
@@ -107,7 +114,8 @@ These habits matter more than any sweep, because they stop the big leaks at the 
 3. **Clone dependencies; don't reinstall them per worktree.** On macOS (APFS),
    `cp -c -R ../main/node_modules node_modules` makes a copy-on-write clone that takes almost no extra
    space. pnpm's hardlinked store does the same. Remove a worktree when its branch is merged or abandoned
-   (`git worktree remove <path>`).
+   (`git worktree remove <path>`, never `--force`: if git refuses, it holds work, so ask the user).
+   `scan --only agent-worktrees --paths` lists the agent worktrees git proves clean, in every project.
 4. **Check before you write more than ~1 GB.** Model pulls, docker builds, datasets and fresh installs:
    run `S status` first. If it says LOW, run `S sweep`, and tell the user if space is still tight instead
    of letting the disk hit 0 bytes. Agents and editors can corrupt their own settings at 0 bytes free.
@@ -121,9 +129,10 @@ These habits matter more than any sweep, because they stop the big leaks at the 
   debug logs, OpenCode undo snapshots older than 30 days, stale npx/uv/pip/Xcode build caches, `$TMPDIR`
   entries older than 7 days. Hooks, the timer and plain `sweep` handle these.
 - **confirm:** recoverable only from somewhere else, or part of the user's history. Examples: clean
-  agent worktrees, transcripts and Codex/Gemini/Copilot sessions older than 30 days, Cursor workspace
-  storage, `node_modules`/`.venv` of projects idle for 30+ days, old Playwright browsers, Docker build
-  cache. Show the user the rule names and sizes from `scan`. For rules that touch their own folders
+  agent worktrees (the Claude desktop app's `<repo>/.claude/worktrees` too, in every project),
+  transcripts and Codex/Gemini/Copilot sessions older than 30 days, Cursor workspace storage,
+  `node_modules`/`.venv` of projects idle for 30+ days, old Playwright browsers, Docker build cache.
+  Show the user the rule names and sizes from `scan`. For rules that touch their own folders
   (`stale-project-deps`, `agent-worktrees`, their custom rules), also show `S scan --only RULE --paths`.
   Then run `--only` with exactly the rules they approve; `sweep --tier confirm` refuses without it.
 - **info:** local models, the Cowork VM image, Codex DBs, Cowork `outputs/`, Trash. The script never
